@@ -357,3 +357,40 @@ fn even_jury_size_is_rejected() {
 
     client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &4);
 }
+
+#[test]
+fn parties_cannot_be_drawn_as_jurors_on_their_own_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+    token_admin_client.mint(&host, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // both parties register as jurors alongside one genuinely neutral juror
+    let neutral = Address::generate(&env);
+    token_admin_client.mint(&neutral, &200_0000000);
+    client.register_juror(&renter, &asset_address, &100_0000000);
+    client.register_juror(&host, &asset_address, &100_0000000);
+    client.register_juror(&neutral, &asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let dispute = client.get_dispute(&escrow_id).unwrap();
+    assert!(!dispute.jurors.contains(&renter));
+    assert!(!dispute.jurors.contains(&host));
+    assert!(dispute.jurors.contains(&neutral));
+}
