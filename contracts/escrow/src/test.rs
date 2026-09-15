@@ -173,3 +173,72 @@ fn cancel_escrow_by_stranger_fails() {
 
     client.cancel_escrow(&stranger, &escrow_id);
 }
+
+#[test]
+fn mutual_cancel_refunds_unreleased_milestones() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    // release the first milestone early so only the second is refundable
+    client.confirm_milestone(&renter, &escrow_id, &0);
+    assert_eq!(token_client.balance(&host), 60_0000000i128);
+
+    let renter_balance_before = token_client.balance(&renter);
+    client.mutual_cancel(&renter, &host, &escrow_id);
+
+    assert_eq!(token_client.balance(&renter), renter_balance_before + 40_0000000i128);
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Cancelled);
+    assert!(escrow.milestones.get(1).unwrap().released);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")] // InvalidState
+fn mutual_cancel_on_disputed_escrow_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    client.mutual_cancel(&renter, &host, &escrow_id);
+}

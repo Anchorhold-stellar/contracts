@@ -172,6 +172,48 @@ impl EscrowContract {
             .publish((symbol_short!("escrow"), symbol_short!("cancelled")), escrow_id);
     }
 
+    /// Both parties agree to unwind a funded, undisputed escrow early.
+    /// Requires both signatures in the same invocation (a real multi-sig
+    /// transaction, not a unilateral call) - refunds every not-yet-released
+    /// milestone amount back to the renter and closes the escrow.
+    pub fn mutual_cancel(env: Env, renter: Address, host: Address, escrow_id: u32) {
+        renter.require_auth();
+        host.require_auth();
+
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter || escrow.host != host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Active {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+
+        let mut refund: i128 = 0;
+        for i in 0..escrow.milestones.len() {
+            let mut m = escrow.milestones.get(i).unwrap();
+            if !m.released {
+                refund += m.amount;
+                m.released = true;
+                escrow.milestones.set(i, m);
+            }
+        }
+
+        if refund > 0 {
+            let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
+            token.transfer(&env.current_contract_address(), &renter, &refund);
+        }
+
+        escrow.status = EscrowStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("mutual")),
+            (escrow_id, refund),
+        );
+    }
+
     /// Renter explicitly confirms a milestone is satisfied and releases it
     /// to the host early (before the auto-release timeout).
     pub fn confirm_milestone(env: Env, renter: Address, escrow_id: u32, milestone_index: u32) {
