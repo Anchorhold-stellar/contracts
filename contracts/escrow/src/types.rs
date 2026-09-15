@@ -46,6 +46,15 @@ pub struct Escrow {
 
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct FeeConfig {
+    /// Protocol fee in basis points (1 = 0.01%), taken out of every
+    /// milestone payout - both normal releases and dispute payouts.
+    pub bps: u32,
+    pub treasury: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct Dispute {
     pub escrow_id: u32,
     pub milestone_index: u32,
