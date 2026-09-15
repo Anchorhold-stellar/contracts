@@ -74,6 +74,10 @@ pub struct JurorParams {
     /// i32::MIN (no gate) so existing behavior is unaffected until an admin
     /// opts in.
     pub min_reputation: i32,
+    /// Basis points of a resolved (non-stale) dispute's amount paid out to
+    /// the jurors who voted on it, split evenly regardless of which side
+    /// they voted for. Defaults to 0 (disabled).
+    pub arbitration_fee_bps: u32,
 }
 
 #[contracttype]

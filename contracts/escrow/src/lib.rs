@@ -46,6 +46,10 @@ const DEFAULT_JUROR_SLASH_BPS: u32 = 1000; // 10%
 const MAX_FEE_BPS: u32 = 2000;
 /// Hard ceiling on the juror slash rate, same rationale as MAX_FEE_BPS.
 const MAX_SLASH_BPS: u32 = 5000; // 50%
+/// Hard ceiling on the juror arbitration fee - it comes out of the
+/// disputed amount before either party sees any of it, so it needs its
+/// own (tighter) cap independent of the protocol fee.
+const MAX_ARBITRATION_FEE_BPS: u32 = 1000; // 10%
 /// Per-call cap on extend_milestone_deadline: 1 year.
 const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
 /// Upper bound on milestone descriptions and dispute evidence URIs. These
@@ -187,6 +191,7 @@ impl EscrowContract {
         jury_size: u32,
         slash_bps: u32,
         min_reputation: i32,
+        arbitration_fee_bps: u32,
     ) {
         Self::require_admin(&env, &admin);
         if min_stake <= 0 {
@@ -198,9 +203,18 @@ impl EscrowContract {
         if slash_bps > MAX_SLASH_BPS {
             panic_with_error!(&env, Error::SlashTooHigh);
         }
+        if arbitration_fee_bps > MAX_ARBITRATION_FEE_BPS {
+            panic_with_error!(&env, Error::ArbitrationFeeTooHigh);
+        }
         env.storage().instance().set(
             &DataKey::JurorParams,
-            &JurorParams { min_stake, jury_size, slash_bps, min_reputation },
+            &JurorParams {
+                min_stake,
+                jury_size,
+                slash_bps,
+                min_reputation,
+                arbitration_fee_bps,
+            },
         );
     }
 
@@ -869,8 +883,20 @@ impl EscrowContract {
 
         let m = escrow.milestones.get(dispute.milestone_index).unwrap();
         let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
+
+        let arbitration_fee_bps = Self::juror_params(&env).arbitration_fee_bps;
+        let arbitration_fee = (m.amount * arbitration_fee_bps as i128) / BPS_DENOMINATOR;
+        if arbitration_fee > 0 && !dispute.jurors.is_empty() {
+            let share = arbitration_fee / dispute.jurors.len() as i128;
+            if share > 0 {
+                for juror in dispute.jurors.iter() {
+                    token.transfer(&env.current_contract_address(), &juror, &share);
+                }
+            }
+        }
+
         let recipient = if renter_wins { &escrow.renter } else { &escrow.host };
-        Self::pay_out(&env, &token, recipient, m.amount);
+        Self::pay_out(&env, &token, recipient, m.amount - arbitration_fee);
 
         let mut m = m;
         m.released = true;
@@ -1268,6 +1294,7 @@ impl EscrowContract {
                 jury_size: DEFAULT_JURY_SIZE,
                 slash_bps: DEFAULT_JUROR_SLASH_BPS,
                 min_reputation: i32::MIN,
+                arbitration_fee_bps: 0,
             })
     }
 
