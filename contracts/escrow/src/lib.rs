@@ -43,6 +43,8 @@ const DEFAULT_JUROR_SLASH_BPS: u32 = 1000; // 10%
 const MAX_FEE_BPS: u32 = 2000;
 /// Hard ceiling on the juror slash rate, same rationale as MAX_FEE_BPS.
 const MAX_SLASH_BPS: u32 = 5000; // 50%
+/// Per-call cap on extend_milestone_deadline: 1 year.
+const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -420,6 +422,47 @@ impl EscrowContract {
             panic_with_error!(&env, Error::TooEarly);
         }
         Self::release_milestone_internal(&env, &mut escrow, milestone_index);
+    }
+
+    /// Renter grants the host extra time before a milestone's auto-release
+    /// deadline - a unilateral, host-favorable action (like an early
+    /// confirm, just in the other direction), so only the renter's
+    /// signature is required. Capped per-call to keep a fat-fingered value
+    /// from parking a milestone in limbo for centuries.
+    pub fn extend_milestone_deadline(
+        env: Env,
+        renter: Address,
+        escrow_id: u32,
+        milestone_index: u32,
+        additional_seconds: u64,
+    ) {
+        renter.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Active {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        if additional_seconds == 0 || additional_seconds > MAX_DEADLINE_EXTENSION_SECONDS {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+
+        let mut m = escrow
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+        if m.released {
+            panic_with_error!(&env, Error::AlreadyReleased);
+        }
+        m.auto_release_at = m
+            .auto_release_at
+            .checked_add(additional_seconds)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        escrow.milestones.set(milestone_index, m);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
     }
 
     /// Either party can open a dispute on a specific milestone before it
