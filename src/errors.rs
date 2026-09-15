@@ -22,4 +22,5 @@ pub enum Error {
     InsufficientStake = 16,
     NoJurorsAvailable = 17,
     FeeTooHigh = 18,
+    InvalidJurySize = 19,
 }

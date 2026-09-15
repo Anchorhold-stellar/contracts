@@ -303,3 +303,57 @@ fn fee_config_requires_admin() {
 
     client.set_fee_config(&stranger, &500, &treasury);
 }
+
+#[test]
+fn juror_params_are_configurable_and_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // shrink the jury to 1 and raise the minimum stake
+    client.set_juror_params(&admin, &500_0000000, &1);
+    let params = client.get_juror_params();
+    assert_eq!(params.jury_size, 1);
+    assert_eq!(params.min_stake, 500_0000000);
+
+    let juror = Address::generate(&env);
+    token_admin_client.mint(&juror, &1_000_0000000);
+    // the old default stake (100) is now below the configured minimum
+    let err = client.try_register_juror(&juror, &asset_address, &100_0000000);
+    assert!(err.is_err());
+    client.register_juror(&juror, &asset_address, &500_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let dispute = client.get_dispute(&escrow_id).unwrap();
+    assert_eq!(dispute.jurors.len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")] // InvalidJurySize
+fn even_jury_size_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &4);
+}

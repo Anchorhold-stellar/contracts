@@ -23,10 +23,10 @@ mod errors;
 mod types;
 
 use errors::Error;
-use types::{Dispute, DisputeOutcome, Escrow, EscrowStatus, FeeConfig, Milestone};
+use types::{Dispute, DisputeOutcome, Escrow, EscrowStatus, FeeConfig, JurorParams, Milestone};
 
-const MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
-const JURY_SIZE: u32 = 3;
+const DEFAULT_MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
+const DEFAULT_JURY_SIZE: u32 = 3;
 /// Hard ceiling on the protocol fee, independent of whatever the admin sets:
 /// 20% of a milestone payout, so a compromised or careless admin key can't
 /// route the whole escrow to the treasury.
@@ -44,6 +44,7 @@ pub enum DataKey {
     JurorStake(Address),
     Reputation(Address),
     FeeConfig,
+    JurorParams,
 }
 
 #[contract]
@@ -79,6 +80,26 @@ impl EscrowContract {
 
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Update the juror pool requirements. `jury_size` must be odd (so
+    /// `resolve_dispute`'s majority check can't tie) and at least 1.
+    pub fn set_juror_params(env: Env, admin: Address, min_stake: i128, jury_size: u32) {
+        Self::require_admin(&env, &admin);
+        if min_stake <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if jury_size == 0 || jury_size % 2 == 0 {
+            panic_with_error!(&env, Error::InvalidJurySize);
+        }
+        env.storage().instance().set(
+            &DataKey::JurorParams,
+            &JurorParams { min_stake, jury_size },
+        );
+    }
+
+    pub fn get_juror_params(env: Env) -> JurorParams {
+        Self::juror_params(&env)
     }
 
     /// Create a new escrow with an ordered list of milestones. `renter` must
@@ -327,7 +348,8 @@ impl EscrowContract {
     /// side's reward pool (kept simple here — see `resolve_dispute`).
     pub fn register_juror(env: Env, juror: Address, asset: Address, stake: i128) {
         juror.require_auth();
-        if stake < MIN_JUROR_STAKE {
+        let params = Self::juror_params(&env);
+        if stake < params.min_stake {
             panic_with_error!(&env, Error::InsufficientStake);
         }
         let token = soroban_sdk::token::Client::new(&env, &asset);
@@ -539,7 +561,8 @@ impl EscrowContract {
         if pool_len == 0 {
             panic_with_error!(env, Error::NoJurorsAvailable);
         }
-        let take = if JURY_SIZE < pool_len { JURY_SIZE } else { pool_len };
+        let jury_size = Self::juror_params(env).jury_size;
+        let take = if jury_size < pool_len { jury_size } else { pool_len };
         // rotate the starting index by escrow id so consecutive disputes
         // don't always draw the same jurors — still not sybil-resistant,
         // see the note above.
@@ -561,6 +584,16 @@ impl EscrowContract {
         if &admin != caller {
             panic_with_error!(env, Error::NotAuthorized);
         }
+    }
+
+    fn juror_params(env: &Env) -> JurorParams {
+        env.storage()
+            .instance()
+            .get(&DataKey::JurorParams)
+            .unwrap_or(JurorParams {
+                min_stake: DEFAULT_MIN_JUROR_STAKE,
+                jury_size: DEFAULT_JURY_SIZE,
+            })
     }
 
     /// Splits a payout into (fee, net) per the configured protocol fee.

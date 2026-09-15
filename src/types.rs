@@ -46,6 +46,13 @@ pub struct Escrow {
 
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct JurorParams {
+    pub min_stake: i128,
+    pub jury_size: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct FeeConfig {
     /// Protocol fee in basis points (1 = 0.01%), taken out of every
     /// milestone payout - both normal releases and dispute payouts.
