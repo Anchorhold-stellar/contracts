@@ -62,6 +62,10 @@ const MAX_MILESTONES: u32 = 50;
 /// Same storage-cost rationale as MAX_MILESTONES/MAX_STRING_LENGTH, applied
 /// to how many follow-up evidence entries a single dispute can accumulate.
 const MAX_ADDITIONAL_EVIDENCE: u32 = 10;
+/// Reputation awarded to the host when an escrow completes having never
+/// been disputed - small on purpose (dispute wins are worth +2) since this
+/// rewards the common case, not an adversarial outcome.
+const CLEAN_COMPLETION_REPUTATION_BONUS: i32 = 1;
 /// How long an escrow can sit in `Created` (never funded, never cancelled)
 /// before anyone can permissionlessly expire it - same "someone has to be
 /// able to clean this up" rationale as check_auto_release and
@@ -348,6 +352,7 @@ impl EscrowContract {
             dispute_id: None,
             host_accepted: !requires_host_acceptance,
             created_at: env.ledger().timestamp(),
+            ever_disputed: false,
         };
         env.storage().persistent().set(&DataKey::Escrow(id), &escrow);
         Self::index_party_escrow(&env, &renter, id);
@@ -750,6 +755,7 @@ impl EscrowContract {
 
         escrow.status = EscrowStatus::Disputed;
         escrow.dispute_id = Some(milestone_index);
+        escrow.ever_disputed = true;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -1225,6 +1231,14 @@ impl EscrowContract {
         if escrow.status == EscrowStatus::Completed {
             env.events()
                 .publish((symbol_short!("escrow"), symbol_short!("complete")), escrow.id);
+            // Reputation only ever moved through dispute outcomes, so a
+            // host with a long track record of clean completions looked
+            // identical to a brand-new one. Disputed escrows are excluded
+            // here since resolve_dispute/force_resolve_stale_dispute
+            // already adjust reputation for their own outcome.
+            if !escrow.ever_disputed {
+                Self::adjust_reputation(env, &escrow.host, CLEAN_COMPLETION_REPUTATION_BONUS);
+            }
         }
     }
 
