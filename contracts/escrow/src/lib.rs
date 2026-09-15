@@ -139,10 +139,15 @@ impl EscrowContract {
 
         let mut total: i128 = 0;
         let mut built: Vec<Milestone> = Vec::new(&env);
+        let mut last_offset: u64 = 0;
         for (desc, amount, offset) in milestones.iter() {
             if amount <= 0 {
                 panic_with_error!(&env, Error::InvalidAmount);
             }
+            if offset < last_offset {
+                panic_with_error!(&env, Error::NonChronologicalMilestones);
+            }
+            last_offset = offset;
             total += amount;
             built.push_back(Milestone {
                 description: desc.clone(),
@@ -194,6 +199,11 @@ impl EscrowContract {
         }
         if amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if let Some(last) = escrow.milestones.last() {
+            if auto_release_offset < last.auto_release_offset {
+                panic_with_error!(&env, Error::NonChronologicalMilestones);
+            }
         }
 
         escrow.milestones.push_back(Milestone {

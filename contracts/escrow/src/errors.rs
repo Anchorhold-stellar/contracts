@@ -27,4 +27,5 @@ pub enum Error {
     JurorHasActiveDispute = 21,
     SameParty = 22,
     MissingEvidence = 23,
+    NonChronologicalMilestones = 24,
 }
