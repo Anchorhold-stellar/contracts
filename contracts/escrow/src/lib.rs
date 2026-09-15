@@ -819,6 +819,7 @@ impl EscrowContract {
             (symbol_short!("escrow"), symbol_short!("resolved")),
             (escrow_id, dispute.milestone_index, recipient.clone()),
         );
+        Self::maybe_emit_completed(&env, &escrow);
     }
 
     /// Anyone can call this once `voting_deadline` has passed if jurors
@@ -876,6 +877,7 @@ impl EscrowContract {
             (symbol_short!("escrow"), symbol_short!("stale")),
             (escrow_id, dispute.milestone_index),
         );
+        Self::maybe_emit_completed(&env, &escrow);
     }
 
     pub fn get_escrow(env: Env, escrow_id: u32) -> Escrow {
@@ -946,6 +948,17 @@ impl EscrowContract {
             (symbol_short!("escrow"), symbol_short!("released")),
             (escrow.id, milestone_index, amount, escrow.host.clone()),
         );
+        Self::maybe_emit_completed(env, escrow);
+    }
+
+    /// Emits a dedicated completion event so the indexer doesn't have to
+    /// re-fetch and scan every milestone after each `released`/`resolved`
+    /// event just to find out whether that was the last one.
+    fn maybe_emit_completed(env: &Env, escrow: &Escrow) {
+        if escrow.status == EscrowStatus::Completed {
+            env.events()
+                .publish((symbol_short!("escrow"), symbol_short!("complete")), escrow.id);
+        }
     }
 
     fn all_released(escrow: &Escrow) -> bool {
