@@ -1035,3 +1035,70 @@ fn neutral_reputation_address_can_still_register_once_gated() {
     client.register_juror(&juror, &asset_address, &100_0000000);
     assert!(client.get_juror_stake(&juror).is_some());
 }
+
+#[test]
+fn confirm_all_milestones_releases_every_remaining_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, 500u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    client.confirm_all_milestones(&renter, &escrow_id);
+
+    assert_eq!(token_client.balance(&host), 100_0000000i128);
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Completed);
+    for i in 0..3 {
+        assert!(escrow.milestones.get(i).unwrap().released);
+    }
+}
+
+#[test]
+fn confirm_all_milestones_skips_already_released_ones() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    client.confirm_milestone(&renter, &escrow_id, &0);
+    assert_eq!(token_client.balance(&host), 30_0000000i128);
+
+    client.confirm_all_milestones(&renter, &escrow_id);
+    assert_eq!(token_client.balance(&host), 70_0000000i128);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Completed);
+}

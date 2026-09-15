@@ -387,6 +387,23 @@ impl EscrowContract {
         Self::release_milestone_internal(&env, &mut escrow, milestone_index);
     }
 
+    /// Convenience wrapper around `confirm_milestone` that releases every
+    /// remaining unreleased milestone in one call, instead of requiring one
+    /// transaction per milestone when the renter is happy to sign off on
+    /// all of them at once.
+    pub fn confirm_all_milestones(env: Env, renter: Address, escrow_id: u32) {
+        renter.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        for i in 0..escrow.milestones.len() {
+            if !escrow.milestones.get(i).unwrap().released {
+                Self::release_milestone_internal(&env, &mut escrow, i);
+            }
+        }
+    }
+
     /// Anyone can call this to trigger auto-release once the timeout has
     /// passed and no dispute is open. Kept permissionless (like a keeper
     /// job) so releases don't depend on either party being online.
