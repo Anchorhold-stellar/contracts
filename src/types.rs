@@ -16,6 +16,9 @@ pub enum DisputeOutcome {
     Pending,
     RenterWins,
     HostWins,
+    /// Jurors never reached a full vote before the deadline; the disputed
+    /// amount was split 50/50 instead of leaving it frozen forever.
+    Split,
 }
 
 #[contracttype]
@@ -79,4 +82,7 @@ pub struct Dispute {
     pub votes_for_host: Vec<Address>,
     pub resolved: bool,
     pub outcome: DisputeOutcome,
+    /// Ledger timestamp after which anyone can call
+    /// `force_resolve_stale_dispute` if jurors haven't finished voting.
+    pub voting_deadline: u64,
 }
