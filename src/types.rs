@@ -45,6 +45,11 @@ pub struct Escrow {
     pub milestones: Vec<Milestone>,
     pub status: EscrowStatus,
     pub dispute_id: Option<u32>,
+    /// False only when `requires_host_acceptance` was set at creation and
+    /// the host hasn't called `accept_escrow` yet. `deposit` checks this
+    /// directly rather than adding a new EscrowStatus, so the common
+    /// (unrequested) case stays a plain Created -> Active transition.
+    pub host_accepted: bool,
 }
 
 #[contracttype]
