@@ -858,3 +858,58 @@ fn add_milestone_rejects_offset_earlier_than_previous() {
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "too-early"), &10_0000000i128, &0u64);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")] // ContractPaused
+fn paused_contract_rejects_new_escrows() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    client.set_paused(&admin, &true);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    client.create_escrow(&renter, &host, &asset_address, &milestones);
+}
+
+#[test]
+fn pausing_does_not_freeze_already_active_escrows() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    // pause hits *after* this escrow is already active
+    client.set_paused(&admin, &true);
+    assert!(client.is_paused());
+
+    // existing funded escrows must still be serviceable
+    client.confirm_milestone(&renter, &escrow_id, &0);
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.status, EscrowStatus::Completed);
+}

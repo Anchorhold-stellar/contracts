@@ -28,4 +28,5 @@ pub enum Error {
     SameParty = 22,
     MissingEvidence = 23,
     NonChronologicalMilestones = 24,
+    ContractPaused = 25,
 }
