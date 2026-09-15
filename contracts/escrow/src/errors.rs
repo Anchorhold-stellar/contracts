@@ -32,4 +32,5 @@ pub enum Error {
     SlashTooHigh = 26,
     ReputationTooLow = 27,
     HostAcceptancePending = 28,
+    StringTooLong = 29,
 }
