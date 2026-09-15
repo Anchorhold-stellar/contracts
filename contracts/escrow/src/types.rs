@@ -62,6 +62,10 @@ pub struct JurorParams {
     /// Basis points of a minority juror's stake slashed on a resolved
     /// dispute (not a stale one - see `force_resolve_stale_dispute`).
     pub slash_bps: u32,
+    /// Minimum on-chain reputation required to register_juror. Defaults to
+    /// i32::MIN (no gate) so existing behavior is unaffected until an admin
+    /// opts in.
+    pub min_reputation: i32,
 }
 
 #[contracttype]

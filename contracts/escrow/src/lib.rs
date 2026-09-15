@@ -104,6 +104,7 @@ impl EscrowContract {
         min_stake: i128,
         jury_size: u32,
         slash_bps: u32,
+        min_reputation: i32,
     ) {
         Self::require_admin(&env, &admin);
         if min_stake <= 0 {
@@ -117,7 +118,7 @@ impl EscrowContract {
         }
         env.storage().instance().set(
             &DataKey::JurorParams,
-            &JurorParams { min_stake, jury_size, slash_bps },
+            &JurorParams { min_stake, jury_size, slash_bps, min_reputation },
         );
     }
 
@@ -478,6 +479,9 @@ impl EscrowContract {
         let params = Self::juror_params(&env);
         if stake < params.min_stake {
             panic_with_error!(&env, Error::InsufficientStake);
+        }
+        if Self::get_reputation(env.clone(), juror.clone()) < params.min_reputation {
+            panic_with_error!(&env, Error::ReputationTooLow);
         }
         let token = soroban_sdk::token::Client::new(&env, &asset);
         token.transfer(&juror, &env.current_contract_address(), &stake);
@@ -969,6 +973,7 @@ impl EscrowContract {
                 min_stake: DEFAULT_MIN_JUROR_STAKE,
                 jury_size: DEFAULT_JURY_SIZE,
                 slash_bps: DEFAULT_JUROR_SLASH_BPS,
+                min_reputation: i32::MIN,
             })
     }
 
