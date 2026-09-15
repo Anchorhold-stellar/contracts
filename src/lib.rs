@@ -45,6 +45,10 @@ const MAX_FEE_BPS: u32 = 2000;
 const MAX_SLASH_BPS: u32 = 5000; // 50%
 /// Per-call cap on extend_milestone_deadline: 1 year.
 const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
+/// Upper bound on milestone descriptions and dispute evidence URIs. These
+/// land in persistent storage, so an unbounded string is an unbounded and
+/// permanent storage-cost griefing vector, not just a UX nuisance.
+const MAX_STRING_LENGTH: u32 = 512;
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -194,6 +198,9 @@ impl EscrowContract {
             if amount <= 0 {
                 panic_with_error!(&env, Error::InvalidAmount);
             }
+            if desc.len() > MAX_STRING_LENGTH {
+                panic_with_error!(&env, Error::StringTooLong);
+            }
             if offset < last_offset {
                 panic_with_error!(&env, Error::NonChronologicalMilestones);
             }
@@ -300,6 +307,9 @@ impl EscrowContract {
         }
         if amount <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
+        }
+        if description.len() > MAX_STRING_LENGTH {
+            panic_with_error!(&env, Error::StringTooLong);
         }
         if let Some(last) = escrow.milestones.last() {
             if auto_release_offset < last.auto_release_offset {
@@ -550,6 +560,9 @@ impl EscrowContract {
         caller.require_auth();
         if evidence_uri.is_empty() {
             panic_with_error!(&env, Error::MissingEvidence);
+        }
+        if evidence_uri.len() > MAX_STRING_LENGTH {
+            panic_with_error!(&env, Error::StringTooLong);
         }
         let mut escrow = Self::load_escrow(&env, escrow_id);
 
