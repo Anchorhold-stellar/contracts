@@ -896,6 +896,49 @@ impl EscrowContract {
             .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
     }
 
+    /// Both parties can jointly agree to give jurors more time instead of
+    /// letting the dispute run out the clock into
+    /// `force_resolve_stale_dispute`'s 50/50 split - useful when the
+    /// evidence turned out to be more complex than either side expected.
+    /// Requires both signatures in the same call, same pattern as
+    /// `mutual_cancel`, so neither party can unilaterally stall the other.
+    pub fn extend_dispute_deadline(
+        env: Env,
+        renter: Address,
+        host: Address,
+        escrow_id: u32,
+        milestone_index: u32,
+        additional_seconds: u64,
+    ) {
+        renter.require_auth();
+        host.require_auth();
+
+        let escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter || escrow.host != host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if additional_seconds == 0 || additional_seconds > MAX_DEADLINE_EXTENSION_SECONDS {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
+        if dispute.resolved {
+            panic_with_error!(&env, Error::AlreadyResolved);
+        }
+
+        dispute.voting_deadline = dispute
+            .voting_deadline
+            .checked_add(additional_seconds)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
+    }
+
     /// Either party (not just whoever opened the dispute) can attach more
     /// evidence for jurors to consider before voting closes. `evidence_uri`
     /// on raise_dispute is only ever the opener's initial submission -

@@ -2188,3 +2188,75 @@ fn flat_voting_is_unaffected_when_weighting_disabled() {
     let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     assert_eq!(dispute.outcome, DisputeOutcome::RenterWins);
 }
+
+#[test]
+fn mutual_extension_pushes_back_stale_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let original_deadline = client.get_dispute(&escrow_id, &0).unwrap().voting_deadline;
+    let extra = 5 * 24 * 60 * 60;
+    client.extend_dispute_deadline(&renter, &host, &escrow_id, &0, &extra);
+    assert_eq!(client.get_dispute(&escrow_id, &0).unwrap().voting_deadline, original_deadline + extra);
+
+    // jump past the *original* 3-day window - force-resolve should still
+    // refuse since the deadline was pushed back
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3 * 24 * 60 * 60 + 1);
+    let err = client.try_force_resolve_stale_dispute(&escrow_id, &0);
+    assert!(err.is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn extend_dispute_deadline_requires_both_actual_parties() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    client.extend_dispute_deadline(&renter, &stranger, &escrow_id, &0, &(24 * 60 * 60));
+}
