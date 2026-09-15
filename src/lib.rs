@@ -56,6 +56,7 @@ pub enum DataKey {
     FeeConfig,
     JurorParams,
     ActiveDisputeCount(Address),
+    Paused,
 }
 
 #[contract]
@@ -113,6 +114,20 @@ impl EscrowContract {
         Self::juror_params(&env)
     }
 
+    /// Emergency circuit breaker: stops new escrows from being created or
+    /// funded. Deliberately does *not* touch confirm_milestone,
+    /// check_auto_release, disputes, or juror actions on escrows that are
+    /// already active - pausing is meant to stop new exposure during an
+    /// incident, not strand funds that are already locked up.
+    pub fn set_paused(env: Env, admin: Address, paused: bool) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::Paused, &paused);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        Self::paused(&env)
+    }
+
     /// Create a new escrow with an ordered list of milestones. `renter` must
     /// call `deposit` afterward to actually lock funds — creating an escrow
     /// doesn't move any tokens.
@@ -130,6 +145,9 @@ impl EscrowContract {
     ) -> u32 {
         renter.require_auth();
 
+        if Self::paused(&env) {
+            panic_with_error!(&env, Error::ContractPaused);
+        }
         if renter == host {
             panic_with_error!(&env, Error::SameParty);
         }
@@ -249,6 +267,9 @@ impl EscrowContract {
     /// `auto_release_at` relative to this deposit timestamp.
     pub fn deposit(env: Env, renter: Address, escrow_id: u32) {
         renter.require_auth();
+        if Self::paused(&env) {
+            panic_with_error!(&env, Error::ContractPaused);
+        }
         let mut escrow = Self::load_escrow(&env, escrow_id);
 
         if escrow.renter != renter {
@@ -804,6 +825,10 @@ impl EscrowContract {
             selected.push_back(eligible.get(idx).unwrap());
         }
         selected
+    }
+
+    fn paused(env: &Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
     fn require_admin(env: &Env, caller: &Address) {
