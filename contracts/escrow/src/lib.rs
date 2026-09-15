@@ -86,6 +86,7 @@ pub enum DataKey {
     PartyEscrows(Address),
     PendingAdmin,
     DisputeVotingWindow,
+    FeeExempt(Address),
 }
 
 #[contract]
@@ -183,6 +184,26 @@ impl EscrowContract {
 
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Exempt (or un-exempt) `party` from the protocol fee on any payout
+    /// they receive - milestone releases and dispute-resolution payouts
+    /// alike, since both flow through the same `pay_out` helper. Meant for
+    /// cases like platform partners or subsidized hosts where charging the
+    /// standard fee doesn't make sense.
+    pub fn set_fee_exempt(env: Env, admin: Address, party: Address, exempt: bool) {
+        Self::require_admin(&env, &admin);
+        if exempt {
+            env.storage()
+                .persistent()
+                .set(&DataKey::FeeExempt(party), &true);
+        } else {
+            env.storage().persistent().remove(&DataKey::FeeExempt(party));
+        }
+    }
+
+    pub fn is_fee_exempt(env: Env, party: Address) -> bool {
+        Self::is_fee_exempt_internal(&env, &party)
     }
 
     /// Update the juror pool requirements. `jury_size` must be odd (so
@@ -1347,7 +1368,10 @@ impl EscrowContract {
 
     /// Splits a payout into (fee, net) per the configured protocol fee.
     /// Returns (0, amount) when no fee is configured.
-    fn fee_split(env: &Env, amount: i128) -> (i128, i128) {
+    fn fee_split(env: &Env, recipient: &Address, amount: i128) -> (i128, i128) {
+        if Self::is_fee_exempt_internal(env, recipient) {
+            return (0, amount);
+        }
         match env.storage().instance().get::<_, FeeConfig>(&DataKey::FeeConfig) {
             Some(cfg) if cfg.bps > 0 => {
                 let fee = (amount * cfg.bps as i128) / BPS_DENOMINATOR;
@@ -1357,8 +1381,15 @@ impl EscrowContract {
         }
     }
 
+    fn is_fee_exempt_internal(env: &Env, party: &Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeExempt(party.clone()))
+            .unwrap_or(false)
+    }
+
     fn pay_out(env: &Env, token: &soroban_sdk::token::Client, recipient: &Address, amount: i128) {
-        let (fee, net) = Self::fee_split(env, amount);
+        let (fee, net) = Self::fee_split(env, recipient, amount);
         if fee > 0 {
             if let Some(cfg) = env.storage().instance().get::<_, FeeConfig>(&DataKey::FeeConfig) {
                 token.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
