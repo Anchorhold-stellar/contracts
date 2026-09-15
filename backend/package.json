@@ -1,0 +1,18 @@
+{
+  "name": "@safetrust-v2/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "indexer": "node --watch src/indexer/soroban-indexer.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "@stellar/stellar-sdk": "^12.3.0"
+  }
+}
