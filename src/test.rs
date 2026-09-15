@@ -587,3 +587,85 @@ fn force_resolve_splits_funds_after_deadline_with_no_votes() {
         client.withdraw_juror_stake(&j);
     }
 }
+
+#[test]
+fn add_and_remove_milestone_before_funding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+
+    client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "move-out"), &40_0000000i128, &999_999u64);
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.milestones.len(), 2);
+    assert_eq!(escrow.total_amount, 100_0000000i128);
+
+    client.remove_milestone(&renter, &escrow_id, &0);
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.milestones.len(), 1);
+    assert_eq!(escrow.total_amount, 40_0000000i128);
+    assert_eq!(escrow.milestones.get(0).unwrap().description, String::from_str(&env, "move-out"));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")] // NoMilestones
+fn cannot_remove_last_remaining_milestone() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "only one"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+
+    client.remove_milestone(&renter, &escrow_id, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")] // InvalidState
+fn cannot_edit_milestones_after_funding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "extra"), &10_0000000i128, &0u64);
+}
