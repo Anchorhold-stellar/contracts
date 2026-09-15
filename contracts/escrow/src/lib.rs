@@ -731,6 +731,16 @@ impl EscrowContract {
         if escrow.status == EscrowStatus::Disputed {
             panic_with_error!(&env, Error::EscrowDisputed);
         }
+        // Disputing anything other than an Active (i.e. actually funded)
+        // escrow would let resolve_dispute pay out m.amount for a
+        // milestone that was never deposited - that transfer would still
+        // succeed by drawing on the contract's pooled token balance from
+        // *other* escrows and juror stakes in the same asset, since the
+        // contract doesn't segregate funds per escrow. A Created (never
+        // funded) escrow has no real money behind it at all.
+        if escrow.status != EscrowStatus::Active {
+            panic_with_error!(&env, Error::InvalidState);
+        }
 
         let jurors = Self::select_jurors(&env, escrow_id, &escrow.renter, &escrow.host);
         for j in jurors.iter() {

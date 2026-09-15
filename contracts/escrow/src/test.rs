@@ -2330,3 +2330,83 @@ fn disputed_escrow_completion_does_not_double_award_reputation() {
     // completion bonus on top of that
     assert_eq!(client.get_reputation(&host), 2);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")] // InvalidState
+fn cannot_raise_dispute_on_an_unfunded_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // an escrow that was created but never deposited into has no real
+    // funds behind it - raising (and resolving) a dispute on it would
+    // otherwise let resolve_dispute's token.transfer draw on the
+    // contract's pooled balance from *other* escrows/stakes in this asset
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Created);
+
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+}
+
+#[test]
+fn unfunded_dispute_attempt_cannot_drain_other_escrows_pooled_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    // a legitimate, fully funded escrow whose money sits in the
+    // contract's pooled balance for this asset
+    let victim_renter = Address::generate(&env);
+    let victim_host = Address::generate(&env);
+    // an attacker pair trying to dispute an escrow they never funded
+    let attacker_renter = Address::generate(&env);
+    let attacker_host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&victim_renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut victim_milestones = Vec::new(&env);
+    victim_milestones.push_back((String::from_str(&env, "real deposit"), 500_0000000i128, 999_999u64));
+    let victim_escrow = client.create_escrow(&victim_renter, &victim_host, &asset_address, &victim_milestones, &false);
+    client.deposit(&victim_renter, &victim_escrow);
+    assert_eq!(token_client.balance(&contract_id), 500_0000000i128);
+
+    let mut attacker_milestones = Vec::new(&env);
+    attacker_milestones.push_back((String::from_str(&env, "fake claim"), 500_0000000i128, 999_999u64));
+    let attacker_escrow = client.create_escrow(
+        &attacker_renter,
+        &attacker_host,
+        &asset_address,
+        &attacker_milestones,
+        &false,
+    );
+
+    let err = client.try_raise_dispute(
+        &attacker_host,
+        &attacker_escrow,
+        &0,
+        &String::from_str(&env, "ipfs://fake-evidence"),
+    );
+    assert!(err.is_err());
+
+    // the pooled balance backing the victim's real escrow is untouched
+    assert_eq!(token_client.balance(&contract_id), 500_0000000i128);
+}
