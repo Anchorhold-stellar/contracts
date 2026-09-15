@@ -1755,3 +1755,57 @@ fn active_dispute_count_reflects_open_assignments() {
     client.resolve_dispute(&escrow_id, &0);
     assert_eq!(client.get_active_dispute_count(&juror), 0);
 }
+
+#[test]
+fn dispute_voting_window_is_configurable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    assert_eq!(client.get_dispute_voting_window(), 3 * 24 * 60 * 60);
+
+    let one_day = 24 * 60 * 60;
+    client.set_dispute_voting_window(&admin, &one_day);
+    assert_eq!(client.get_dispute_voting_window(), one_day);
+
+    let juror = Address::generate(&env);
+    token_admin_client.mint(&juror, &200_0000000);
+    client.register_juror(&juror, &asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    // shorter window means force-resolve is available sooner than the old
+    // 3-day default would have allowed
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + one_day + 1);
+    client.force_resolve_stale_dispute(&escrow_id, &0);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Completed);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #32)")] // InvalidVotingWindow
+fn dispute_voting_window_rejects_out_of_bounds_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_dispute_voting_window(&admin, &30); // well under the 1-hour floor
+}

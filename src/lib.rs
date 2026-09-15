@@ -30,10 +30,13 @@ use types::{
 
 const DEFAULT_MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
 const DEFAULT_JURY_SIZE: u32 = 3;
-/// How long jurors have to finish voting before anyone can force-resolve
-/// the dispute with a 50/50 split. Keeps a milestone from being frozen
-/// forever if jurors go silent.
-const DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
+/// Default (admin-configurable, see set_dispute_voting_window) length of
+/// time jurors have to finish voting before anyone can force-resolve the
+/// dispute with a 50/50 split. Keeps a milestone from being frozen forever
+/// if jurors go silent.
+const DEFAULT_DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
+const MIN_DISPUTE_VOTING_WINDOW: u64 = 60 * 60; // 1 hour
+const MAX_DISPUTE_VOTING_WINDOW: u64 = 30 * 24 * 60 * 60; // 30 days
 /// Fraction of a minority juror's stake slashed on a resolved (non-stale)
 /// dispute. Redistributed to majority jurors staked in the same asset.
 const DEFAULT_JUROR_SLASH_BPS: u32 = 1000; // 10%
@@ -75,6 +78,7 @@ pub enum DataKey {
     Paused,
     PartyEscrows(Address),
     PendingAdmin,
+    DisputeVotingWindow,
 }
 
 #[contract]
@@ -137,6 +141,24 @@ impl EscrowContract {
 
     pub fn get_pending_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// How long jurors get to vote before a dispute can be force-resolved.
+    /// Bounded to [MIN_DISPUTE_VOTING_WINDOW, MAX_DISPUTE_VOTING_WINDOW] so
+    /// it can't be set to something that either resolves disputes before
+    /// jurors can plausibly react or never resolves them at all.
+    pub fn set_dispute_voting_window(env: Env, admin: Address, seconds: u64) {
+        Self::require_admin(&env, &admin);
+        if !(MIN_DISPUTE_VOTING_WINDOW..=MAX_DISPUTE_VOTING_WINDOW).contains(&seconds) {
+            panic_with_error!(&env, Error::InvalidVotingWindow);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeVotingWindow, &seconds);
+    }
+
+    pub fn get_dispute_voting_window(env: Env) -> u64 {
+        Self::dispute_voting_window(&env)
     }
 
     /// Set (or update) the protocol fee taken out of every milestone payout.
@@ -661,7 +683,7 @@ impl EscrowContract {
             votes_for_host: Vec::new(&env),
             resolved: false,
             outcome: DisputeOutcome::Pending,
-            voting_deadline: env.ledger().timestamp() + DISPUTE_VOTING_WINDOW,
+            voting_deadline: env.ledger().timestamp() + Self::dispute_voting_window(&env),
         };
         env.storage()
             .persistent()
@@ -1228,6 +1250,13 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::ActiveDisputeCount(juror.clone()), &count.saturating_sub(1));
+    }
+
+    fn dispute_voting_window(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DisputeVotingWindow)
+            .unwrap_or(DEFAULT_DISPUTE_VOTING_WINDOW)
     }
 
     fn juror_params(env: &Env) -> JurorParams {
