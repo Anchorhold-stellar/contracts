@@ -764,3 +764,24 @@ fn slash_with_no_matching_asset_majority_juror_is_not_misdirected() {
     assert_eq!(client.get_juror_stake(&maj1).unwrap().amount, 100_0000000i128);
     assert_eq!(client.get_juror_stake(&maj2).unwrap().amount, 100_0000000i128);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #22)")] // SameParty
+fn cannot_create_escrow_with_same_renter_and_host() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    client.create_escrow(&renter, &renter, &asset_address, &milestones);
+}

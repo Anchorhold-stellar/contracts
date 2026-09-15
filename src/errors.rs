@@ -25,4 +25,5 @@ pub enum Error {
     InvalidJurySize = 19,
     AssetMismatch = 20,
     JurorHasActiveDispute = 21,
+    SameParty = 22,
 }
