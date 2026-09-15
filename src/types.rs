@@ -59,6 +59,9 @@ pub struct JurorStakeInfo {
 pub struct JurorParams {
     pub min_stake: i128,
     pub jury_size: u32,
+    /// Basis points of a minority juror's stake slashed on a resolved
+    /// dispute (not a stale one - see `force_resolve_stale_dispute`).
+    pub slash_bps: u32,
 }
 
 #[contracttype]

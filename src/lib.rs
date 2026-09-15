@@ -36,11 +36,13 @@ const DEFAULT_JURY_SIZE: u32 = 3;
 const DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
 /// Fraction of a minority juror's stake slashed on a resolved (non-stale)
 /// dispute. Redistributed to majority jurors staked in the same asset.
-const JUROR_SLASH_BPS: u32 = 1000; // 10%
+const DEFAULT_JUROR_SLASH_BPS: u32 = 1000; // 10%
 /// Hard ceiling on the protocol fee, independent of whatever the admin sets:
 /// 20% of a milestone payout, so a compromised or careless admin key can't
 /// route the whole escrow to the treasury.
 const MAX_FEE_BPS: u32 = 2000;
+/// Hard ceiling on the juror slash rate, same rationale as MAX_FEE_BPS.
+const MAX_SLASH_BPS: u32 = 5000; // 50%
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -96,7 +98,13 @@ impl EscrowContract {
 
     /// Update the juror pool requirements. `jury_size` must be odd (so
     /// `resolve_dispute`'s majority check can't tie) and at least 1.
-    pub fn set_juror_params(env: Env, admin: Address, min_stake: i128, jury_size: u32) {
+    pub fn set_juror_params(
+        env: Env,
+        admin: Address,
+        min_stake: i128,
+        jury_size: u32,
+        slash_bps: u32,
+    ) {
         Self::require_admin(&env, &admin);
         if min_stake <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
@@ -104,9 +112,12 @@ impl EscrowContract {
         if jury_size == 0 || jury_size.is_multiple_of(2) {
             panic_with_error!(&env, Error::InvalidJurySize);
         }
+        if slash_bps > MAX_SLASH_BPS {
+            panic_with_error!(&env, Error::SlashTooHigh);
+        }
         env.storage().instance().set(
             &DataKey::JurorParams,
-            &JurorParams { min_stake, jury_size },
+            &JurorParams { min_stake, jury_size, slash_bps },
         );
     }
 
@@ -843,7 +854,7 @@ impl EscrowContract {
         }
     }
 
-    /// Slashes `JUROR_SLASH_BPS` of each minority-side juror's stake and
+    /// Slashes the configured `slash_bps` of each minority-side juror's stake and
     /// redistributes it evenly among majority-side jurors staked in the
     /// same asset as the slashed stake. A minority juror's stake asset
     /// might not match any majority juror's (jurors aren't required to
@@ -857,6 +868,7 @@ impl EscrowContract {
             (&dispute.votes_for_host, &dispute.votes_for_renter)
         };
 
+        let slash_bps = Self::juror_params(env).slash_bps;
         let mut slash_assets: Vec<Address> = Vec::new(env);
         let mut slash_amounts: Vec<i128> = Vec::new(env);
 
@@ -871,7 +883,7 @@ impl EscrowContract {
                 // resolution - nothing left to slash.
                 None => continue,
             };
-            let slash = (info.amount * JUROR_SLASH_BPS as i128) / BPS_DENOMINATOR;
+            let slash = (info.amount * slash_bps as i128) / BPS_DENOMINATOR;
             info.amount -= slash;
             env.storage()
                 .persistent()
@@ -956,6 +968,7 @@ impl EscrowContract {
             .unwrap_or(JurorParams {
                 min_stake: DEFAULT_MIN_JUROR_STAKE,
                 jury_size: DEFAULT_JURY_SIZE,
+                slash_bps: DEFAULT_JUROR_SLASH_BPS,
             })
     }
 
