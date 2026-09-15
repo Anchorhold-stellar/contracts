@@ -1352,3 +1352,44 @@ fn resolving_one_milestones_dispute_does_not_erase_another_milestones_record() {
     assert!(dispute_1_after.resolved);
     assert_eq!(dispute_1_after.outcome, DisputeOutcome::HostWins);
 }
+
+#[test]
+fn admin_can_be_rotated_and_new_admin_takes_effect() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    assert_eq!(client.get_admin(), admin);
+
+    client.transfer_admin(&admin, &new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+
+    // the old admin key no longer has any power...
+    let err = client.try_set_fee_config(&admin, &500, &treasury);
+    assert!(err.is_err());
+    // ...only the new one does
+    client.set_fee_config(&new_admin, &500, &treasury);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn only_current_admin_can_transfer_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.transfer_admin(&stranger, &new_admin);
+}
