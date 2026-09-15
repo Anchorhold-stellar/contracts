@@ -935,6 +935,26 @@ impl EscrowContract {
             .unwrap_or(0)
     }
 
+    /// Total number of escrows ever created (equivalently, one past the
+    /// highest valid escrow ID) - lets the indexer know the upper bound to
+    /// scan without tracking it separately off-chain.
+    pub fn get_escrow_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0)
+    }
+
+    /// How many unresolved disputes `juror` is currently assigned to.
+    /// Lets a frontend show *why* withdraw_juror_stake would fail instead
+    /// of the juror finding out from a failed transaction.
+    pub fn get_active_dispute_count(env: Env, juror: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ActiveDisputeCount(juror))
+            .unwrap_or(0)
+    }
+
     // ---- internal helpers ----
 
     fn next_escrow_id(env: &Env) -> u32 {
