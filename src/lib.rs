@@ -53,7 +53,7 @@ pub enum DataKey {
     Admin,
     EscrowCounter,
     Escrow(u32),
-    Dispute(u32),
+    Dispute(u32, u32),
     JurorPool,
     JurorStake(Address),
     Reputation(Address),
@@ -569,10 +569,10 @@ impl EscrowContract {
         };
         env.storage()
             .persistent()
-            .set(&DataKey::Dispute(escrow_id), &dispute);
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
 
         escrow.status = EscrowStatus::Disputed;
-        escrow.dispute_id = Some(escrow_id);
+        escrow.dispute_id = Some(milestone_index);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -685,12 +685,18 @@ impl EscrowContract {
 
     /// A juror assigned to this dispute casts a vote for who should receive
     /// the disputed milestone amount.
-    pub fn vote_dispute(env: Env, juror: Address, escrow_id: u32, vote_for_renter: bool) {
+    pub fn vote_dispute(
+        env: Env,
+        juror: Address,
+        escrow_id: u32,
+        milestone_index: u32,
+        vote_for_renter: bool,
+    ) {
         juror.require_auth();
         let mut dispute: Dispute = env
             .storage()
             .persistent()
-            .get(&DataKey::Dispute(escrow_id))
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
             .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
 
         if dispute.resolved {
@@ -710,7 +716,7 @@ impl EscrowContract {
         }
         env.storage()
             .persistent()
-            .set(&DataKey::Dispute(escrow_id), &dispute);
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
     }
 
     /// Tally votes once all jurors have voted (see
@@ -718,11 +724,11 @@ impl EscrowContract {
     /// Distributes the disputed milestone amount to the winning side,
     /// updates reputation for both parties, and slashes/rewards jurors
     /// per `apply_juror_incentives`.
-    pub fn resolve_dispute(env: Env, escrow_id: u32) {
+    pub fn resolve_dispute(env: Env, escrow_id: u32, milestone_index: u32) {
         let mut dispute: Dispute = env
             .storage()
             .persistent()
-            .get(&DataKey::Dispute(escrow_id))
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
             .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
         if dispute.resolved {
             panic_with_error!(&env, Error::AlreadyResolved);
@@ -775,7 +781,7 @@ impl EscrowContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Dispute(escrow_id), &dispute);
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -792,11 +798,11 @@ impl EscrowContract {
     /// renter and host instead of leaving it frozen indefinitely - neither
     /// party's reputation is adjusted, since a stalled jury isn't either
     /// party's fault.
-    pub fn force_resolve_stale_dispute(env: Env, escrow_id: u32) {
+    pub fn force_resolve_stale_dispute(env: Env, escrow_id: u32, milestone_index: u32) {
         let mut dispute: Dispute = env
             .storage()
             .persistent()
-            .get(&DataKey::Dispute(escrow_id))
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
             .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
         if dispute.resolved {
             panic_with_error!(&env, Error::AlreadyResolved);
@@ -832,7 +838,7 @@ impl EscrowContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Dispute(escrow_id), &dispute);
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -847,8 +853,10 @@ impl EscrowContract {
         Self::load_escrow(&env, escrow_id)
     }
 
-    pub fn get_dispute(env: Env, escrow_id: u32) -> Option<Dispute> {
-        env.storage().persistent().get(&DataKey::Dispute(escrow_id))
+    pub fn get_dispute(env: Env, escrow_id: u32, milestone_index: u32) -> Option<Dispute> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
     }
 
     pub fn get_reputation(env: Env, who: Address) -> i32 {

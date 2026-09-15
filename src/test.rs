@@ -341,7 +341,7 @@ fn juror_params_are_configurable_and_enforced() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    let dispute = client.get_dispute(&escrow_id).unwrap();
+    let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     assert_eq!(dispute.jurors.len(), 1);
 }
 
@@ -390,7 +390,7 @@ fn parties_cannot_be_drawn_as_jurors_on_their_own_dispute() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    let dispute = client.get_dispute(&escrow_id).unwrap();
+    let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     assert!(!dispute.jurors.contains(&renter));
     assert!(!dispute.jurors.contains(&host));
     assert!(dispute.jurors.contains(&neutral));
@@ -478,8 +478,8 @@ fn juror_can_withdraw_after_dispute_resolves() {
     let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
-    client.vote_dispute(&juror, &escrow_id, &true);
-    client.resolve_dispute(&escrow_id);
+    client.vote_dispute(&juror, &escrow_id, &0, &true);
+    client.resolve_dispute(&escrow_id, &0);
 
     // now idle again - withdrawal should succeed
     client.withdraw_juror_stake(&juror);
@@ -536,7 +536,7 @@ fn force_resolve_before_deadline_fails() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    client.force_resolve_stale_dispute(&escrow_id);
+    client.force_resolve_stale_dispute(&escrow_id, &0);
 }
 
 #[test]
@@ -573,12 +573,12 @@ fn force_resolve_splits_funds_after_deadline_with_no_votes() {
 
     let renter_before = token_client.balance(&renter);
     let host_before = token_client.balance(&host);
-    client.force_resolve_stale_dispute(&escrow_id);
+    client.force_resolve_stale_dispute(&escrow_id, &0);
 
     assert_eq!(token_client.balance(&renter), renter_before + 25_0000000i128);
     assert_eq!(token_client.balance(&host), host_before + 25_0000000i128);
 
-    let dispute = client.get_dispute(&escrow_id).unwrap();
+    let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     assert!(dispute.resolved);
     assert_eq!(dispute.outcome, DisputeOutcome::Split);
 
@@ -701,14 +701,14 @@ fn minority_juror_is_slashed_and_majority_rewarded() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    let dispute = client.get_dispute(&escrow_id).unwrap();
+    let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     assert_eq!(dispute.jurors.len(), 3);
 
     // host wins 2-1: maj1 and maj2 vote for host, minority votes for renter
-    client.vote_dispute(&maj1, &escrow_id, &false);
-    client.vote_dispute(&maj2, &escrow_id, &false);
-    client.vote_dispute(&minority, &escrow_id, &true);
-    client.resolve_dispute(&escrow_id);
+    client.vote_dispute(&maj1, &escrow_id, &0, &false);
+    client.vote_dispute(&maj2, &escrow_id, &0, &false);
+    client.vote_dispute(&minority, &escrow_id, &0, &true);
+    client.resolve_dispute(&escrow_id, &0);
 
     // 10% of 100 = 10, split evenly between the two majority jurors = 5 each
     assert_eq!(client.get_juror_stake(&minority).unwrap().amount, 90_0000000i128);
@@ -751,10 +751,10 @@ fn slash_with_no_matching_asset_majority_juror_is_not_misdirected() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    client.vote_dispute(&maj1, &escrow_id, &false);
-    client.vote_dispute(&maj2, &escrow_id, &false);
-    client.vote_dispute(&minority, &escrow_id, &true);
-    client.resolve_dispute(&escrow_id);
+    client.vote_dispute(&maj1, &escrow_id, &0, &false);
+    client.vote_dispute(&maj2, &escrow_id, &0, &false);
+    client.vote_dispute(&minority, &escrow_id, &0, &true);
+    client.resolve_dispute(&escrow_id, &0);
 
     // minority still gets slashed even though nobody on the majority side
     // shares their staking asset...
@@ -948,10 +948,10 @@ fn custom_slash_rate_is_applied_instead_of_default() {
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
-    client.vote_dispute(&maj1, &escrow_id, &false);
-    client.vote_dispute(&maj2, &escrow_id, &false);
-    client.vote_dispute(&minority, &escrow_id, &true);
-    client.resolve_dispute(&escrow_id);
+    client.vote_dispute(&maj1, &escrow_id, &0, &false);
+    client.vote_dispute(&maj2, &escrow_id, &0, &false);
+    client.vote_dispute(&minority, &escrow_id, &0, &true);
+    client.resolve_dispute(&escrow_id, &0);
 
     // 20% of 100 = 20, split evenly = 10 each
     assert_eq!(client.get_juror_stake(&minority).unwrap().amount, 80_0000000i128);
@@ -1002,11 +1002,11 @@ fn low_reputation_address_cannot_register_as_juror_once_gated() {
     let escrow_id = client.create_escrow(&renter, &bad_host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&bad_host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
-    let dispute = client.get_dispute(&escrow_id).unwrap();
+    let dispute = client.get_dispute(&escrow_id, &0).unwrap();
     for j in dispute.jurors.iter() {
-        client.vote_dispute(&j, &escrow_id, &true); // renter wins, bad_host loses
+        client.vote_dispute(&j, &escrow_id, &0, &true); // renter wins, bad_host loses
     }
-    client.resolve_dispute(&escrow_id);
+    client.resolve_dispute(&escrow_id, &0);
     assert!(client.get_reputation(&bad_host) < 0);
 
     // now gate juror registration on non-negative reputation
@@ -1295,4 +1295,60 @@ fn only_host_can_accept_escrow() {
     let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
 
     client.accept_escrow(&renter, &escrow_id);
+}
+
+#[test]
+fn resolving_one_milestones_dispute_does_not_erase_another_milestones_record() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 30_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // dispute + resolve milestone 0
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence-0"));
+    let dispute_0 = client.get_dispute(&escrow_id, &0).unwrap();
+    for j in dispute_0.jurors.iter() {
+        client.vote_dispute(&j, &escrow_id, &0, &true);
+    }
+    client.resolve_dispute(&escrow_id, &0);
+
+    // now dispute + resolve milestone 1 - a *different* dispute, same escrow
+    client.raise_dispute(&host, &escrow_id, &1, &String::from_str(&env, "ipfs://evidence-1"));
+    let dispute_1 = client.get_dispute(&escrow_id, &1).unwrap();
+    for j in dispute_1.jurors.iter() {
+        client.vote_dispute(&j, &escrow_id, &1, &false);
+    }
+    client.resolve_dispute(&escrow_id, &1);
+
+    // milestone 0's resolved record must still be there, untouched by
+    // milestone 1's dispute reusing the same escrow.
+    let dispute_0_after = client.get_dispute(&escrow_id, &0).unwrap();
+    assert!(dispute_0_after.resolved);
+    assert_eq!(dispute_0_after.outcome, DisputeOutcome::RenterWins);
+    assert_eq!(dispute_0_after.evidence_uri, String::from_str(&env, "ipfs://evidence-0"));
+
+    let dispute_1_after = client.get_dispute(&escrow_id, &1).unwrap();
+    assert!(dispute_1_after.resolved);
+    assert_eq!(dispute_1_after.outcome, DisputeOutcome::HostWins);
 }
