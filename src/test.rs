@@ -1102,3 +1102,61 @@ fn confirm_all_milestones_skips_already_released_ones() {
     assert_eq!(token_client.balance(&host), 70_0000000i128);
     assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Completed);
 }
+
+#[test]
+fn renter_can_extend_a_milestone_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    let before = client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at;
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &500);
+    let after = client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at;
+    assert_eq!(after, before + 500);
+
+    // check_auto_release should still refuse before the *new* deadline
+    let err = client.try_check_auto_release(&escrow_id, &0);
+    assert!(err.is_err());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // InvalidAmount
+fn extend_milestone_deadline_rejects_excessive_extension() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &(366 * 24 * 60 * 60));
+}
