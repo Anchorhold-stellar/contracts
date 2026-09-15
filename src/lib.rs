@@ -23,7 +23,10 @@ mod errors;
 mod types;
 
 use errors::Error;
-use types::{Dispute, DisputeOutcome, Escrow, EscrowStatus, FeeConfig, JurorParams, Milestone};
+use types::{
+    Dispute, DisputeOutcome, Escrow, EscrowStatus, FeeConfig, JurorParams, JurorStakeInfo,
+    Milestone,
+};
 
 const DEFAULT_MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
 const DEFAULT_JURY_SIZE: u32 = 3;
@@ -45,6 +48,7 @@ pub enum DataKey {
     Reputation(Address),
     FeeConfig,
     JurorParams,
+    ActiveDisputeCount(Address),
 }
 
 #[contract]
@@ -314,6 +318,9 @@ impl EscrowContract {
         }
 
         let jurors = Self::select_jurors(&env, escrow_id, &escrow.renter, &escrow.host);
+        for j in jurors.iter() {
+            Self::inc_active_dispute_count(&env, &j);
+        }
         let dispute = Dispute {
             escrow_id,
             milestone_index,
@@ -343,9 +350,11 @@ impl EscrowContract {
         escrow_id
     }
 
-    /// Register as a juror by staking `MIN_JUROR_STAKE` of the escrow's
-    /// asset. Slashed stake on a losing minority vote goes to the majority
-    /// side's reward pool (kept simple here — see `resolve_dispute`).
+    /// Register as a juror by staking at least the configured minimum of
+    /// `asset`. Calling this again with more of the *same* asset tops up
+    /// the existing stake; switching assets is rejected outright since
+    /// stake, slashing, and rewards are all tracked in a single asset per
+    /// juror (see `JurorStakeInfo`).
     pub fn register_juror(env: Env, juror: Address, asset: Address, stake: i128) {
         juror.require_auth();
         let params = Self::juror_params(&env);
@@ -355,9 +364,23 @@ impl EscrowContract {
         let token = soroban_sdk::token::Client::new(&env, &asset);
         token.transfer(&juror, &env.current_contract_address(), &stake);
 
-        env.storage()
+        let existing: Option<JurorStakeInfo> = env
+            .storage()
             .persistent()
-            .set(&DataKey::JurorStake(juror.clone()), &stake);
+            .get(&DataKey::JurorStake(juror.clone()));
+        let total_stake = match existing {
+            Some(info) => {
+                if info.asset != asset {
+                    panic_with_error!(&env, Error::AssetMismatch);
+                }
+                info.amount + stake
+            }
+            None => stake,
+        };
+        env.storage().persistent().set(
+            &DataKey::JurorStake(juror.clone()),
+            &JurorStakeInfo { asset, amount: total_stake },
+        );
 
         let mut pool: Vec<Address> = env
             .storage()
@@ -371,6 +394,55 @@ impl EscrowContract {
 
         env.events()
             .publish((symbol_short!("juror"), symbol_short!("joined")), (juror, stake));
+    }
+
+    /// Withdraw the caller's full juror stake and leave the pool. Blocked
+    /// while assigned to any dispute that hasn't been resolved yet, so a
+    /// juror can't dodge an unfavorable vote by pulling their stake out
+    /// from under it.
+    pub fn withdraw_juror_stake(env: Env, juror: Address) {
+        juror.require_auth();
+
+        let active: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActiveDisputeCount(juror.clone()))
+            .unwrap_or(0);
+        if active > 0 {
+            panic_with_error!(&env, Error::JurorHasActiveDispute);
+        }
+
+        let info: JurorStakeInfo = env
+            .storage()
+            .persistent()
+            .get(&DataKey::JurorStake(juror.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotAJuror));
+
+        let token = soroban_sdk::token::Client::new(&env, &info.asset);
+        token.transfer(&env.current_contract_address(), &juror, &info.amount);
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::JurorStake(juror.clone()));
+
+        let mut pool: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::JurorPool)
+            .unwrap_or(Vec::new(&env));
+        if let Some(idx) = pool.first_index_of(&juror) {
+            pool.remove(idx);
+        }
+        env.storage().persistent().set(&DataKey::JurorPool, &pool);
+
+        env.events().publish(
+            (symbol_short!("juror"), symbol_short!("left")),
+            (juror, info.amount),
+        );
+    }
+
+    pub fn get_juror_stake(env: Env, juror: Address) -> Option<JurorStakeInfo> {
+        env.storage().persistent().get(&DataKey::JurorStake(juror))
     }
 
     /// A juror assigned to this dispute casts a vote for who should receive
@@ -455,6 +527,10 @@ impl EscrowContract {
             EscrowStatus::Active
         };
         escrow.dispute_id = None;
+
+        for j in dispute.jurors.iter() {
+            Self::dec_active_dispute_count(&env, &j);
+        }
 
         env.storage()
             .persistent()
@@ -594,6 +670,28 @@ impl EscrowContract {
         if &admin != caller {
             panic_with_error!(env, Error::NotAuthorized);
         }
+    }
+
+    fn inc_active_dispute_count(env: &Env, juror: &Address) {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActiveDisputeCount(juror.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ActiveDisputeCount(juror.clone()), &(count + 1));
+    }
+
+    fn dec_active_dispute_count(env: &Env, juror: &Address) {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActiveDisputeCount(juror.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ActiveDisputeCount(juror.clone()), &count.saturating_sub(1));
     }
 
     fn juror_params(env: &Env) -> JurorParams {
