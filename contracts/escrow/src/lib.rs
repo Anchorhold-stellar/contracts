@@ -52,6 +52,11 @@ const MAX_STRING_LENGTH: u32 = 512;
 /// Same storage/gas-cost rationale as MAX_STRING_LENGTH, applied to the
 /// milestone list's length instead of a string's.
 const MAX_MILESTONES: u32 = 50;
+/// How long an escrow can sit in `Created` (never funded, never cancelled)
+/// before anyone can permissionlessly expire it - same "someone has to be
+/// able to clean this up" rationale as check_auto_release and
+/// force_resolve_stale_dispute.
+const UNFUNDED_EXPIRY_WINDOW: u64 = 30 * 24 * 60 * 60;
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -233,6 +238,7 @@ impl EscrowContract {
             status: EscrowStatus::Created,
             dispute_id: None,
             host_accepted: !requires_host_acceptance,
+            created_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&DataKey::Escrow(id), &escrow);
         Self::index_party_escrow(&env, &renter, id);
@@ -425,6 +431,29 @@ impl EscrowContract {
 
         env.events()
             .publish((symbol_short!("escrow"), symbol_short!("cancelled")), escrow_id);
+    }
+
+    /// Permissionless cleanup for an escrow nobody ever funded or
+    /// explicitly cancelled - anyone can call this once
+    /// `UNFUNDED_EXPIRY_WINDOW` has passed since creation, same keeper
+    /// pattern as `check_auto_release`. No funds move (none were ever
+    /// deposited); this only clears out storage that would otherwise sit
+    /// abandoned indefinitely.
+    pub fn expire_unfunded_escrow(env: Env, escrow_id: u32) {
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        if env.ledger().timestamp() < escrow.created_at + UNFUNDED_EXPIRY_WINDOW {
+            panic_with_error!(&env, Error::NotYetExpired);
+        }
+        escrow.status = EscrowStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events()
+            .publish((symbol_short!("escrow"), symbol_short!("expired")), escrow_id);
     }
 
     /// Both parties agree to unwind a funded, undisputed escrow early.

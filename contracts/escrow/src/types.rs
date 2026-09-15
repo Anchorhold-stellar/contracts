@@ -50,6 +50,9 @@ pub struct Escrow {
     /// directly rather than adding a new EscrowStatus, so the common
     /// (unrequested) case stays a plain Created -> Active transition.
     pub host_accepted: bool,
+    /// Ledger timestamp at creation - used by `expire_unfunded_escrow` to
+    /// clean up escrows nobody ever funded.
+    pub created_at: u64,
 }
 
 #[contracttype]

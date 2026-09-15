@@ -34,4 +34,5 @@ pub enum Error {
     HostAcceptancePending = 28,
     StringTooLong = 29,
     TooManyMilestones = 30,
+    NotYetExpired = 31,
 }
