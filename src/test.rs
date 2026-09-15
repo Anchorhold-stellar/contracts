@@ -2019,3 +2019,79 @@ fn cannot_exceed_the_additional_evidence_cap() {
     // the 11th push should fail
     client.add_dispute_evidence(&renter, &escrow_id, &0, &String::from_str(&env, "ipfs://one-too-many"));
 }
+
+#[test]
+fn fee_exempt_host_receives_full_milestone_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let exempt_host = Address::generate(&env);
+    let regular_host = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    client.set_fee_config(&admin, &1000, &treasury); // 10%
+    client.set_fee_exempt(&admin, &exempt_host, &true);
+    assert!(client.is_fee_exempt(&exempt_host));
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
+
+    // exempt host keeps the full amount, no fee taken
+    let escrow_1 = client.create_escrow(&renter, &exempt_host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_1);
+    client.confirm_milestone(&renter, &escrow_1, &0);
+    assert_eq!(token_client.balance(&exempt_host), 100_0000000i128);
+
+    // regular host still pays the normal fee
+    let escrow_2 = client.create_escrow(&renter, &regular_host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_2);
+    client.confirm_milestone(&renter, &escrow_2, &0);
+    assert_eq!(token_client.balance(&regular_host), 90_0000000i128);
+    assert_eq!(token_client.balance(&treasury), 10_0000000i128);
+}
+
+#[test]
+fn fee_exemption_can_be_revoked() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let party = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_fee_exempt(&admin, &party, &true);
+    assert!(client.is_fee_exempt(&party));
+
+    client.set_fee_exempt(&admin, &party, &false);
+    assert!(!client.is_fee_exempt(&party));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn only_admin_can_set_fee_exemption() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let party = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_fee_exempt(&stranger, &party, &true);
+}
