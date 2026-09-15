@@ -1,7 +1,9 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, token, Env, String};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, token, Env, String, TryFromVal,
+};
 
 fn create_token_contract<'a>(env: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
     let contract_address = env.register_stellar_asset_contract(admin.clone());
@@ -39,6 +41,19 @@ fn happy_path_single_milestone_early_confirm() {
     let escrow = client.get_escrow(&escrow_id);
     assert_eq!(escrow.status, EscrowStatus::Completed);
     assert!(escrow.milestones.get(0).unwrap().released);
+
+    // The indexer relies on these events to reconstruct escrow state off-chain,
+    // so a release that doesn't publish one would silently break it.
+    let released_count = env
+        .events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            soroban_sdk::Symbol::try_from_val(&env, &topics.get_unchecked(1))
+                == Ok(symbol_short!("released"))
+        })
+        .count();
+    assert_eq!(released_count, 1);
 }
 
 #[test]

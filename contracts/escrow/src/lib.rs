@@ -100,7 +100,7 @@ impl EscrowContract {
         let escrow = Escrow {
             id,
             renter: renter.clone(),
-            host,
+            host: host.clone(),
             asset,
             total_amount: total,
             funded_amount: 0,
@@ -109,6 +109,10 @@ impl EscrowContract {
             dispute_id: None,
         };
         env.storage().persistent().set(&DataKey::Escrow(id), &escrow);
+
+        env.events()
+            .publish((symbol_short!("escrow"), symbol_short!("created")), (id, renter, host, total));
+
         id
     }
 
@@ -140,6 +144,11 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("funded")),
+            (escrow_id, escrow.total_amount),
+        );
     }
 
     /// Renter explicitly confirms a milestone is satisfied and releases it
@@ -202,7 +211,7 @@ impl EscrowContract {
         let dispute = Dispute {
             escrow_id,
             milestone_index,
-            opened_by: caller,
+            opened_by: caller.clone(),
             evidence_uri,
             jurors,
             votes_for_renter: Vec::new(&env),
@@ -219,6 +228,11 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("disputed")),
+            (escrow_id, milestone_index, caller),
+        );
 
         escrow_id
     }
@@ -244,9 +258,12 @@ impl EscrowContract {
             .get(&DataKey::JurorPool)
             .unwrap_or(Vec::new(&env));
         if !pool.contains(&juror) {
-            pool.push_back(juror);
+            pool.push_back(juror.clone());
         }
         env.storage().persistent().set(&DataKey::JurorPool, &pool);
+
+        env.events()
+            .publish((symbol_short!("juror"), symbol_short!("joined")), (juror, stake));
     }
 
     /// A juror assigned to this dispute casts a vote for who should receive
@@ -338,6 +355,11 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("resolved")),
+            (escrow_id, dispute.milestone_index, recipient.clone()),
+        );
     }
 
     pub fn get_escrow(env: Env, escrow_id: u32) -> Escrow {
@@ -392,6 +414,7 @@ impl EscrowContract {
         token.transfer(&env.current_contract_address(), &escrow.host, &m.amount);
 
         m.released = true;
+        let amount = m.amount;
         escrow.milestones.set(milestone_index, m);
 
         if Self::all_released(escrow) {
@@ -400,6 +423,11 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow.id), escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("released")),
+            (escrow.id, milestone_index, amount, escrow.host.clone()),
+        );
     }
 
     fn all_released(escrow: &Escrow) -> bool {
