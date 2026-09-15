@@ -89,7 +89,7 @@ for you to fill in with your own RPC endpoint, Freighter integration details,
 and Hasura metadata — those are config/wiring, not design decisions, so
 finishing them shouldn't require changing the architecture.
 
-- [x] Escrow contract: init, deposit, milestone release, auto-release timeout, dispute lifecycle, juror voting
+- [x] Escrow contract: init, deposit, milestone release, auto-release timeout, dispute lifecycle, juror voting, pre/post-funding cancellation, admin-configurable protocol fee, admin-configurable juror params, juror stake withdrawal, stale-dispute fallback resolution, juror slashing/reward, milestone editing pre-funding, and contract events for the indexer to consume
 - [x] Backend: REST routes for escrow + dispute actions, Postgres schema, indexer skeleton
 - [x] Frontend: dashboard, escrow detail with milestone timeline, dispute filing UI, wallet connect stub
 - [ ] TODO: wire indexer to a real Soroban RPC event stream (currently polls a stubbed function)
