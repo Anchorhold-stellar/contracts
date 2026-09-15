@@ -34,6 +34,9 @@ const DEFAULT_JURY_SIZE: u32 = 3;
 /// the dispute with a 50/50 split. Keeps a milestone from being frozen
 /// forever if jurors go silent.
 const DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
+/// Fraction of a minority juror's stake slashed on a resolved (non-stale)
+/// dispute. Redistributed to majority jurors staked in the same asset.
+const JUROR_SLASH_BPS: u32 = 1000; // 10%
 /// Hard ceiling on the protocol fee, independent of whatever the admin sets:
 /// 20% of a milestone payout, so a compromised or careless admin key can't
 /// route the whole escrow to the treasury.
@@ -542,10 +545,11 @@ impl EscrowContract {
             .set(&DataKey::Dispute(escrow_id), &dispute);
     }
 
-    /// Tally votes once all jurors have voted (or can be called by anyone
-    /// after a resolution deadline — deadline enforcement is a TODO, see
-    /// README). Distributes the disputed milestone amount to the winning
-    /// side and updates reputation for both parties.
+    /// Tally votes once all jurors have voted (see
+    /// `force_resolve_stale_dispute` for the case where they don't).
+    /// Distributes the disputed milestone amount to the winning side,
+    /// updates reputation for both parties, and slashes/rewards jurors
+    /// per `apply_juror_incentives`.
     pub fn resolve_dispute(env: Env, escrow_id: u32) {
         let mut dispute: Dispute = env
             .storage()
@@ -585,6 +589,8 @@ impl EscrowContract {
         Self::adjust_reputation(&env, recipient, 2);
         let loser = if renter_wins { &escrow.host } else { &escrow.renter };
         Self::adjust_reputation(&env, loser, -1);
+
+        Self::apply_juror_incentives(&env, &dispute, renter_wins);
 
         // If every milestone is now released, mark the escrow complete;
         // otherwise unfreeze it so remaining milestones can proceed.
@@ -793,6 +799,90 @@ impl EscrowContract {
             .unwrap_or_else(|| panic_with_error!(env, Error::NotAuthorized));
         if &admin != caller {
             panic_with_error!(env, Error::NotAuthorized);
+        }
+    }
+
+    /// Slashes `JUROR_SLASH_BPS` of each minority-side juror's stake and
+    /// redistributes it evenly among majority-side jurors staked in the
+    /// same asset as the slashed stake. A minority juror's stake asset
+    /// might not match any majority juror's (jurors aren't required to
+    /// all stake the same asset) - in that case the slashed amount simply
+    /// stays put as part of the contract's balance rather than being lost
+    /// or misdirected to an unrelated asset's jurors.
+    fn apply_juror_incentives(env: &Env, dispute: &Dispute, renter_wins: bool) {
+        let (majority, minority) = if renter_wins {
+            (&dispute.votes_for_renter, &dispute.votes_for_host)
+        } else {
+            (&dispute.votes_for_host, &dispute.votes_for_renter)
+        };
+
+        let mut slash_assets: Vec<Address> = Vec::new(env);
+        let mut slash_amounts: Vec<i128> = Vec::new(env);
+
+        for juror in minority.iter() {
+            let mut info: JurorStakeInfo = match env
+                .storage()
+                .persistent()
+                .get(&DataKey::JurorStake(juror.clone()))
+            {
+                Some(info) => info,
+                // juror already withdrew everything between voting and
+                // resolution - nothing left to slash.
+                None => continue,
+            };
+            let slash = (info.amount * JUROR_SLASH_BPS as i128) / BPS_DENOMINATOR;
+            info.amount -= slash;
+            env.storage()
+                .persistent()
+                .set(&DataKey::JurorStake(juror.clone()), &info);
+
+            match slash_assets.first_index_of(&info.asset) {
+                Some(idx) => slash_amounts.set(idx, slash_amounts.get(idx).unwrap() + slash),
+                None => {
+                    slash_assets.push_back(info.asset.clone());
+                    slash_amounts.push_back(slash);
+                }
+            }
+        }
+
+        for i in 0..slash_assets.len() {
+            let asset = slash_assets.get(i).unwrap();
+            let pool = slash_amounts.get(i).unwrap();
+            if pool == 0 {
+                continue;
+            }
+
+            let mut eligible: Vec<Address> = Vec::new(env);
+            for juror in majority.iter() {
+                if let Some(info) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, JurorStakeInfo>(&DataKey::JurorStake(juror.clone()))
+                {
+                    if info.asset == asset {
+                        eligible.push_back(juror);
+                    }
+                }
+            }
+            if eligible.is_empty() {
+                continue;
+            }
+
+            let share = pool / eligible.len() as i128;
+            if share == 0 {
+                continue;
+            }
+            for juror in eligible.iter() {
+                let mut info: JurorStakeInfo = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::JurorStake(juror.clone()))
+                    .unwrap();
+                info.amount += share;
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::JurorStake(juror.clone()), &info);
+            }
         }
     }
 

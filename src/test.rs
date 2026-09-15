@@ -669,3 +669,98 @@ fn cannot_edit_milestones_after_funding() {
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "extra"), &10_0000000i128, &0u64);
 }
+
+#[test]
+fn minority_juror_is_slashed_and_majority_rewarded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let maj1 = Address::generate(&env);
+    let maj2 = Address::generate(&env);
+    let minority = Address::generate(&env);
+    for j in [&maj1, &maj2, &minority] {
+        token_admin_client.mint(j, &200_0000000);
+        client.register_juror(j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let dispute = client.get_dispute(&escrow_id).unwrap();
+    assert_eq!(dispute.jurors.len(), 3);
+
+    // host wins 2-1: maj1 and maj2 vote for host, minority votes for renter
+    client.vote_dispute(&maj1, &escrow_id, &false);
+    client.vote_dispute(&maj2, &escrow_id, &false);
+    client.vote_dispute(&minority, &escrow_id, &true);
+    client.resolve_dispute(&escrow_id);
+
+    // 10% of 100 = 10, split evenly between the two majority jurors = 5 each
+    assert_eq!(client.get_juror_stake(&minority).unwrap().amount, 90_0000000i128);
+    assert_eq!(client.get_juror_stake(&maj1).unwrap().amount, 105_0000000i128);
+    assert_eq!(client.get_juror_stake(&maj2).unwrap().amount, 105_0000000i128);
+}
+
+#[test]
+fn slash_with_no_matching_asset_majority_juror_is_not_misdirected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    let other_token_admin_client = create_token_contract(&env, &admin);
+    let other_asset_address = other_token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let maj1 = Address::generate(&env);
+    let maj2 = Address::generate(&env);
+    let minority = Address::generate(&env);
+    token_admin_client.mint(&maj1, &200_0000000);
+    token_admin_client.mint(&maj2, &200_0000000);
+    other_token_admin_client.mint(&minority, &200_0000000);
+    client.register_juror(&maj1, &asset_address, &100_0000000);
+    client.register_juror(&maj2, &asset_address, &100_0000000);
+    client.register_juror(&minority, &other_asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    client.vote_dispute(&maj1, &escrow_id, &false);
+    client.vote_dispute(&maj2, &escrow_id, &false);
+    client.vote_dispute(&minority, &escrow_id, &true);
+    client.resolve_dispute(&escrow_id);
+
+    // minority still gets slashed even though nobody on the majority side
+    // shares their staking asset...
+    assert_eq!(client.get_juror_stake(&minority).unwrap().amount, 90_0000000i128);
+    // ...but the majority jurors' stake is untouched, not credited from an
+    // asset they never staked.
+    assert_eq!(client.get_juror_stake(&maj1).unwrap().amount, 100_0000000i128);
+    assert_eq!(client.get_juror_stake(&maj2).unwrap().amount, 100_0000000i128);
+}
