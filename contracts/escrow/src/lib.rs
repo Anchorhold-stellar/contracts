@@ -87,6 +87,7 @@ pub enum DataKey {
     PendingAdmin,
     DisputeVotingWindow,
     FeeExempt(Address),
+    StakeWeightedVoting,
 }
 
 #[contract]
@@ -204,6 +205,25 @@ impl EscrowContract {
 
     pub fn is_fee_exempt(env: Env, party: Address) -> bool {
         Self::is_fee_exempt_internal(&env, &party)
+    }
+
+    /// Toggle stake-weighted juror voting. When enabled, resolve_dispute
+    /// tallies each side's total staked amount among the jurors who voted
+    /// for it instead of a flat headcount - a juror who staked 10x the
+    /// minimum carries 10x the voting weight. Defaults to false (flat
+    /// one-address-one-vote), matching the original design.
+    pub fn set_stake_weighted_voting(env: Env, admin: Address, enabled: bool) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::StakeWeightedVoting, &enabled);
+    }
+
+    pub fn get_stake_weighted_voting(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::StakeWeightedVoting)
+            .unwrap_or(false)
     }
 
     /// Update the juror pool requirements. `jury_size` must be odd (so
@@ -941,7 +961,8 @@ impl EscrowContract {
         }
 
         let mut escrow = Self::load_escrow(&env, escrow_id);
-        let renter_wins = renter_votes > host_votes;
+        let (renter_weight, host_weight) = Self::tally_votes(&env, &dispute);
+        let renter_wins = renter_weight > host_weight;
         dispute.outcome = if renter_wins {
             DisputeOutcome::RenterWins
         } else {
@@ -1379,6 +1400,29 @@ impl EscrowContract {
             }
             _ => (0, amount),
         }
+    }
+
+    /// Returns (renter_weight, host_weight) for a dispute's votes so far.
+    /// Under flat voting (the default) each vote is worth 1. Under
+    /// stake-weighted voting each vote is worth that juror's current
+    /// staked amount - a juror who withdrew their stake between voting and
+    /// resolution (shouldn't normally happen, since withdrawal is blocked
+    /// while assigned to an unresolved dispute) contributes 0 rather than
+    /// panicking.
+    fn tally_votes(env: &Env, dispute: &Dispute) -> (i128, i128) {
+        if !Self::get_stake_weighted_voting(env.clone()) {
+            return (dispute.votes_for_renter.len() as i128, dispute.votes_for_host.len() as i128);
+        }
+        let weight_of = |juror: Address| -> i128 {
+            env.storage()
+                .persistent()
+                .get::<_, JurorStakeInfo>(&DataKey::JurorStake(juror))
+                .map(|info| info.amount)
+                .unwrap_or(0)
+        };
+        let renter_weight: i128 = dispute.votes_for_renter.iter().map(weight_of).sum();
+        let host_weight: i128 = dispute.votes_for_host.iter().map(weight_of).sum();
+        (renter_weight, host_weight)
     }
 
     fn is_fee_exempt_internal(env: &Env, party: &Address) -> bool {
