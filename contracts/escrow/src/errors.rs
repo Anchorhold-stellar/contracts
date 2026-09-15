@@ -37,4 +37,5 @@ pub enum Error {
     NotYetExpired = 31,
     InvalidVotingWindow = 32,
     ArbitrationFeeTooHigh = 33,
+    TooMuchEvidence = 34,
 }

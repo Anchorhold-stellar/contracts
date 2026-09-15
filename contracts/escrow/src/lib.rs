@@ -59,6 +59,9 @@ const MAX_STRING_LENGTH: u32 = 512;
 /// Same storage/gas-cost rationale as MAX_STRING_LENGTH, applied to the
 /// milestone list's length instead of a string's.
 const MAX_MILESTONES: u32 = 50;
+/// Same storage-cost rationale as MAX_MILESTONES/MAX_STRING_LENGTH, applied
+/// to how many follow-up evidence entries a single dispute can accumulate.
+const MAX_ADDITIONAL_EVIDENCE: u32 = 10;
 /// How long an escrow can sit in `Created` (never funded, never cancelled)
 /// before anyone can permissionlessly expire it - same "someone has to be
 /// able to clean this up" rationale as check_auto_release and
@@ -698,6 +701,7 @@ impl EscrowContract {
             resolved: false,
             outcome: DisputeOutcome::Pending,
             voting_deadline: env.ledger().timestamp() + Self::dispute_voting_window(&env),
+            additional_evidence: Vec::new(&env),
         };
         env.storage()
             .persistent()
@@ -846,6 +850,49 @@ impl EscrowContract {
         } else {
             dispute.votes_for_host.push_back(juror);
         }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
+    }
+
+    /// Either party (not just whoever opened the dispute) can attach more
+    /// evidence for jurors to consider before voting closes. `evidence_uri`
+    /// on raise_dispute is only ever the opener's initial submission -
+    /// this is how the other side gets to respond on-chain instead of only
+    /// off-chain.
+    pub fn add_dispute_evidence(
+        env: Env,
+        caller: Address,
+        escrow_id: u32,
+        milestone_index: u32,
+        evidence_uri: String,
+    ) {
+        caller.require_auth();
+        if evidence_uri.is_empty() {
+            panic_with_error!(&env, Error::MissingEvidence);
+        }
+        if evidence_uri.len() > MAX_STRING_LENGTH {
+            panic_with_error!(&env, Error::StringTooLong);
+        }
+
+        let escrow = Self::load_escrow(&env, escrow_id);
+        if caller != escrow.renter && caller != escrow.host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(escrow_id, milestone_index))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
+        if dispute.resolved {
+            panic_with_error!(&env, Error::AlreadyResolved);
+        }
+        if dispute.additional_evidence.len() >= MAX_ADDITIONAL_EVIDENCE {
+            panic_with_error!(&env, Error::TooMuchEvidence);
+        }
+
+        dispute.additional_evidence.push_back(evidence_uri);
         env.storage()
             .persistent()
             .set(&DataKey::Dispute(escrow_id, milestone_index), &dispute);
