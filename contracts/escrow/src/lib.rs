@@ -30,6 +30,10 @@ use types::{
 
 const DEFAULT_MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
 const DEFAULT_JURY_SIZE: u32 = 3;
+/// How long jurors have to finish voting before anyone can force-resolve
+/// the dispute with a 50/50 split. Keeps a milestone from being frozen
+/// forever if jurors go silent.
+const DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
 /// Hard ceiling on the protocol fee, independent of whatever the admin sets:
 /// 20% of a milestone payout, so a compromised or careless admin key can't
 /// route the whole escrow to the treasury.
@@ -331,6 +335,7 @@ impl EscrowContract {
             votes_for_host: Vec::new(&env),
             resolved: false,
             outcome: DisputeOutcome::Pending,
+            voting_deadline: env.ledger().timestamp() + DISPUTE_VOTING_WINDOW,
         };
         env.storage()
             .persistent()
@@ -542,6 +547,63 @@ impl EscrowContract {
         env.events().publish(
             (symbol_short!("escrow"), symbol_short!("resolved")),
             (escrow_id, dispute.milestone_index, recipient.clone()),
+        );
+    }
+
+    /// Anyone can call this once `voting_deadline` has passed if jurors
+    /// still haven't cast enough votes for `resolve_dispute` to settle the
+    /// dispute normally. Splits the disputed milestone amount 50/50 between
+    /// renter and host instead of leaving it frozen indefinitely - neither
+    /// party's reputation is adjusted, since a stalled jury isn't either
+    /// party's fault.
+    pub fn force_resolve_stale_dispute(env: Env, escrow_id: u32) {
+        let mut dispute: Dispute = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(escrow_id))
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NoDispute));
+        if dispute.resolved {
+            panic_with_error!(&env, Error::AlreadyResolved);
+        }
+        if env.ledger().timestamp() < dispute.voting_deadline {
+            panic_with_error!(&env, Error::TooEarly);
+        }
+
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        let m = escrow.milestones.get(dispute.milestone_index).unwrap();
+        let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
+        let renter_share = m.amount / 2;
+        let host_share = m.amount - renter_share;
+        Self::pay_out(&env, &token, &escrow.renter, renter_share);
+        Self::pay_out(&env, &token, &escrow.host, host_share);
+
+        let mut m = m;
+        m.released = true;
+        escrow.milestones.set(dispute.milestone_index, m);
+
+        dispute.outcome = DisputeOutcome::Split;
+        dispute.resolved = true;
+        for j in dispute.jurors.iter() {
+            Self::dec_active_dispute_count(&env, &j);
+        }
+
+        escrow.status = if Self::all_released(&escrow) {
+            EscrowStatus::Completed
+        } else {
+            EscrowStatus::Active
+        };
+        escrow.dispute_id = None;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(escrow_id), &dispute);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("stale")),
+            (escrow_id, dispute.milestone_index),
         );
     }
 

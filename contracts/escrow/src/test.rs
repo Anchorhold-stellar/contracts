@@ -2,7 +2,8 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events as _, token, Env, String, TryFromVal,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, token, Env, String,
+    TryFromVal,
 };
 
 fn create_token_contract<'a>(env: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
@@ -505,4 +506,84 @@ fn re_registering_with_a_different_asset_is_rejected() {
 
     client.register_juror(&juror, &token_a.address, &100_0000000);
     client.register_juror(&juror, &token_b.address, &100_0000000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")] // TooEarly
+fn force_resolve_before_deadline_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    client.force_resolve_stale_dispute(&escrow_id);
+}
+
+#[test]
+fn force_resolve_splits_funds_after_deadline_with_no_votes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    // jurors go silent - jump past the voting window
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3 * 24 * 60 * 60 + 1);
+
+    let renter_before = token_client.balance(&renter);
+    let host_before = token_client.balance(&host);
+    client.force_resolve_stale_dispute(&escrow_id);
+
+    assert_eq!(token_client.balance(&renter), renter_before + 25_0000000i128);
+    assert_eq!(token_client.balance(&host), host_before + 25_0000000i128);
+
+    let dispute = client.get_dispute(&escrow_id).unwrap();
+    assert!(dispute.resolved);
+    assert_eq!(dispute.outcome, DisputeOutcome::Split);
+
+    // jurors are no longer tied up, so their stake can now be withdrawn
+    for j in dispute.jurors.iter() {
+        client.withdraw_juror_stake(&j);
+    }
 }
