@@ -785,3 +785,29 @@ fn cannot_create_escrow_with_same_renter_and_host() {
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
     client.create_escrow(&renter, &renter, &asset_address, &milestones);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")] // MissingEvidence
+fn raise_dispute_requires_non_empty_evidence() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, ""));
+}
