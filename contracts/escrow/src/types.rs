@@ -53,6 +53,12 @@ pub struct Escrow {
     /// Ledger timestamp at creation - used by `expire_unfunded_escrow` to
     /// clean up escrows nobody ever funded.
     pub created_at: u64,
+    /// Set once by raise_dispute and never cleared, even after the dispute
+    /// resolves - lets completion logic tell "finished with zero disputes
+    /// ever" apart from "finished after resolving one," which
+    /// `status`/`dispute_id` alone can't distinguish once a dispute is
+    /// resolved and the escrow goes back to Active.
+    pub ever_disputed: bool,
 }
 
 #[contracttype]
