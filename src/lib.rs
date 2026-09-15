@@ -100,7 +100,7 @@ impl EscrowContract {
         if min_stake <= 0 {
             panic_with_error!(&env, Error::InvalidAmount);
         }
-        if jury_size == 0 || jury_size % 2 == 0 {
+        if jury_size == 0 || jury_size.is_multiple_of(2) {
             panic_with_error!(&env, Error::InvalidJurySize);
         }
         env.storage().instance().set(
