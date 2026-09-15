@@ -35,4 +35,5 @@ pub enum Error {
     StringTooLong = 29,
     TooManyMilestones = 30,
     NotYetExpired = 31,
+    InvalidVotingWindow = 32,
 }
