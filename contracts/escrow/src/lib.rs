@@ -167,6 +167,68 @@ impl EscrowContract {
         id
     }
 
+    /// Append a milestone to an escrow that hasn't been funded yet. Only
+    /// the renter can edit the milestone list, and only before `deposit`
+    /// locks it in.
+    pub fn add_milestone(
+        env: Env,
+        renter: Address,
+        escrow_id: u32,
+        description: String,
+        amount: i128,
+        auto_release_offset: u64,
+    ) {
+        renter.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        if amount <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
+        }
+
+        escrow.milestones.push_back(Milestone {
+            description,
+            amount,
+            auto_release_offset,
+            released: false,
+            auto_release_at: 0,
+        });
+        escrow.total_amount += amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+    }
+
+    /// Remove a milestone from an unfunded escrow. At least one milestone
+    /// must always remain - use `cancel_escrow` to abandon the whole thing.
+    pub fn remove_milestone(env: Env, renter: Address, escrow_id: u32, milestone_index: u32) {
+        renter.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.renter != renter {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        if escrow.milestones.len() <= 1 {
+            panic_with_error!(&env, Error::NoMilestones);
+        }
+        let m = escrow
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+
+        escrow.total_amount -= m.amount;
+        escrow.milestones.remove(milestone_index);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+    }
+
     /// Renter locks the full escrow amount. Sets each milestone's
     /// `auto_release_at` relative to this deposit timestamp.
     pub fn deposit(env: Env, renter: Address, escrow_id: u32) {
