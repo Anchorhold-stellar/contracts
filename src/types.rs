@@ -104,4 +104,10 @@ pub struct Dispute {
     /// Ledger timestamp after which anyone can call
     /// `force_resolve_stale_dispute` if jurors haven't finished voting.
     pub voting_deadline: u64,
+    /// Follow-up evidence from either party, submitted via
+    /// `add_dispute_evidence` after the dispute was opened. `evidence_uri`
+    /// above is only ever the opener's initial submission - this is where
+    /// the other party (or the opener themselves) can add more before
+    /// jurors vote.
+    pub additional_evidence: Vec<String>,
 }
