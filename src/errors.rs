@@ -33,4 +33,5 @@ pub enum Error {
     ReputationTooLow = 27,
     HostAcceptancePending = 28,
     StringTooLong = 29,
+    TooManyMilestones = 30,
 }

@@ -49,6 +49,9 @@ const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
 /// land in persistent storage, so an unbounded string is an unbounded and
 /// permanent storage-cost griefing vector, not just a UX nuisance.
 const MAX_STRING_LENGTH: u32 = 512;
+/// Same storage/gas-cost rationale as MAX_STRING_LENGTH, applied to the
+/// milestone list's length instead of a string's.
+const MAX_MILESTONES: u32 = 50;
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -190,6 +193,9 @@ impl EscrowContract {
         if milestones.is_empty() {
             panic_with_error!(&env, Error::NoMilestones);
         }
+        if milestones.len() > MAX_MILESTONES {
+            panic_with_error!(&env, Error::TooManyMilestones);
+        }
 
         let mut total: i128 = 0;
         let mut built: Vec<Milestone> = Vec::new(&env);
@@ -310,6 +316,9 @@ impl EscrowContract {
         }
         if description.len() > MAX_STRING_LENGTH {
             panic_with_error!(&env, Error::StringTooLong);
+        }
+        if escrow.milestones.len() >= MAX_MILESTONES {
+            panic_with_error!(&env, Error::TooManyMilestones);
         }
         if let Some(last) = escrow.milestones.last() {
             if auto_release_offset < last.auto_release_offset {
