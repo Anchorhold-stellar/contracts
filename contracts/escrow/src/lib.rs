@@ -82,6 +82,22 @@ impl EscrowContract {
             .set(&DataKey::EscrowCounter, &0u32);
     }
 
+    /// Rotate the admin key. The admin has no power over individual
+    /// escrows (see `initialize`'s doc comment) - this only matters for
+    /// fee config, juror params, and pause/unpause - but a compromised or
+    /// lost admin key should still be replaceable without redeploying.
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
+        Self::require_admin(&env, &current_admin);
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+    }
+
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotAuthorized))
+    }
+
     /// Set (or update) the protocol fee taken out of every milestone payout.
     /// `bps` is capped at `MAX_FEE_BPS` regardless of what the admin asks
     /// for. Passing `bps == 0` effectively disables the fee.
