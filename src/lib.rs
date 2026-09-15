@@ -23,11 +23,15 @@ mod errors;
 mod types;
 
 use errors::Error;
-use types::{Dispute, DisputeOutcome, Escrow, EscrowStatus, Milestone};
+use types::{Dispute, DisputeOutcome, Escrow, EscrowStatus, FeeConfig, Milestone};
 
-const ESCROW_COUNTER: soroban_sdk::Symbol = symbol_short!("ESC_CNT");
 const MIN_JUROR_STAKE: i128 = 100_0000000; // 100 units at 7 decimals, tune per asset
 const JURY_SIZE: u32 = 3;
+/// Hard ceiling on the protocol fee, independent of whatever the admin sets:
+/// 20% of a milestone payout, so a compromised or careless admin key can't
+/// route the whole escrow to the treasury.
+const MAX_FEE_BPS: u32 = 2000;
+const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
 #[derive(Clone)]
@@ -39,6 +43,7 @@ pub enum DataKey {
     JurorPool,
     JurorStake(Address),
     Reputation(Address),
+    FeeConfig,
 }
 
 #[contract]
@@ -57,6 +62,23 @@ impl EscrowContract {
         env.storage()
             .instance()
             .set(&DataKey::EscrowCounter, &0u32);
+    }
+
+    /// Set (or update) the protocol fee taken out of every milestone payout.
+    /// `bps` is capped at `MAX_FEE_BPS` regardless of what the admin asks
+    /// for. Passing `bps == 0` effectively disables the fee.
+    pub fn set_fee_config(env: Env, admin: Address, bps: u32, treasury: Address) {
+        Self::require_admin(&env, &admin);
+        if bps > MAX_FEE_BPS {
+            panic_with_error!(&env, Error::FeeTooHigh);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeConfig, &FeeConfig { bps, treasury });
+    }
+
+    pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
+        env.storage().instance().get(&DataKey::FeeConfig)
     }
 
     /// Create a new escrow with an ordered list of milestones. `renter` must
@@ -391,7 +413,7 @@ impl EscrowContract {
         let m = escrow.milestones.get(dispute.milestone_index).unwrap();
         let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
         let recipient = if renter_wins { &escrow.renter } else { &escrow.host };
-        token.transfer(&env.current_contract_address(), recipient, &m.amount);
+        Self::pay_out(&env, &token, recipient, m.amount);
 
         let mut m = m;
         m.released = true;
@@ -474,7 +496,7 @@ impl EscrowContract {
         }
 
         let token = soroban_sdk::token::Client::new(env, &escrow.asset);
-        token.transfer(&env.current_contract_address(), &escrow.host, &m.amount);
+        Self::pay_out(env, &token, &escrow.host, m.amount);
 
         m.released = true;
         let amount = m.amount;
@@ -527,6 +549,40 @@ impl EscrowContract {
             selected.push_back(pool.get(idx).unwrap());
         }
         selected
+    }
+
+    fn require_admin(env: &Env, caller: &Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotAuthorized));
+        if &admin != caller {
+            panic_with_error!(env, Error::NotAuthorized);
+        }
+    }
+
+    /// Splits a payout into (fee, net) per the configured protocol fee.
+    /// Returns (0, amount) when no fee is configured.
+    fn fee_split(env: &Env, amount: i128) -> (i128, i128) {
+        match env.storage().instance().get::<_, FeeConfig>(&DataKey::FeeConfig) {
+            Some(cfg) if cfg.bps > 0 => {
+                let fee = (amount * cfg.bps as i128) / BPS_DENOMINATOR;
+                (fee, amount - fee)
+            }
+            _ => (0, amount),
+        }
+    }
+
+    fn pay_out(env: &Env, token: &soroban_sdk::token::Client, recipient: &Address, amount: i128) {
+        let (fee, net) = Self::fee_split(env, amount);
+        if fee > 0 {
+            if let Some(cfg) = env.storage().instance().get::<_, FeeConfig>(&DataKey::FeeConfig) {
+                token.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
+            }
+        }
+        token.transfer(&env.current_contract_address(), recipient, &net);
     }
 
     fn adjust_reputation(env: &Env, who: &Address, delta: i32) {

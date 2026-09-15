@@ -21,4 +21,5 @@ pub enum Error {
     VotingIncomplete = 15,
     InsufficientStake = 16,
     NoJurorsAvailable = 17,
+    FeeTooHigh = 18,
 }
