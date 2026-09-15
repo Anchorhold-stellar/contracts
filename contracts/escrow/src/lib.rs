@@ -130,6 +130,9 @@ impl EscrowContract {
     ) -> u32 {
         renter.require_auth();
 
+        if renter == host {
+            panic_with_error!(&env, Error::SameParty);
+        }
         if milestones.is_empty() {
             panic_with_error!(&env, Error::NoMilestones);
         }
