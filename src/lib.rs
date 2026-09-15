@@ -373,6 +373,9 @@ impl EscrowContract {
         evidence_uri: String,
     ) -> u32 {
         caller.require_auth();
+        if evidence_uri.is_empty() {
+            panic_with_error!(&env, Error::MissingEvidence);
+        }
         let mut escrow = Self::load_escrow(&env, escrow_id);
 
         if caller != escrow.renter && caller != escrow.host {

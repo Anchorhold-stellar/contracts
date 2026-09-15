@@ -26,4 +26,5 @@ pub enum Error {
     AssetMismatch = 20,
     JurorHasActiveDispute = 21,
     SameParty = 22,
+    MissingEvidence = 23,
 }
