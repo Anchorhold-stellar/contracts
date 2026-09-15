@@ -151,6 +151,27 @@ impl EscrowContract {
         );
     }
 
+    /// Either party can cancel an escrow that hasn't been funded yet - no
+    /// tokens have moved, so this is just a state transition. Once `deposit`
+    /// has been called, use `mutual_cancel` instead.
+    pub fn cancel_escrow(env: Env, caller: Address, escrow_id: u32) {
+        caller.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if caller != escrow.renter && caller != escrow.host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        escrow.status = EscrowStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events()
+            .publish((symbol_short!("escrow"), symbol_short!("cancelled")), escrow_id);
+    }
+
     /// Renter explicitly confirms a milestone is satisfied and releases it
     /// to the host early (before the auto-release timeout).
     pub fn confirm_milestone(env: Env, renter: Address, escrow_id: u32, milestone_index: u32) {
