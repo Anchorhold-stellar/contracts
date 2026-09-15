@@ -29,4 +29,5 @@ pub enum Error {
     MissingEvidence = 23,
     NonChronologicalMilestones = 24,
     ContractPaused = 25,
+    SlashTooHigh = 26,
 }
