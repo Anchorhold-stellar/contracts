@@ -31,4 +31,5 @@ pub enum Error {
     ContractPaused = 25,
     SlashTooHigh = 26,
     ReputationTooLow = 27,
+    HostAcceptancePending = 28,
 }

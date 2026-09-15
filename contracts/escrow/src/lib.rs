@@ -157,6 +157,7 @@ impl EscrowContract {
         host: Address,
         asset: Address,
         milestones: Vec<(String, i128, u64)>,
+        requires_host_acceptance: bool,
     ) -> u32 {
         renter.require_auth();
 
@@ -202,6 +203,7 @@ impl EscrowContract {
             milestones: built,
             status: EscrowStatus::Created,
             dispute_id: None,
+            host_accepted: !requires_host_acceptance,
         };
         env.storage().persistent().set(&DataKey::Escrow(id), &escrow);
         Self::index_party_escrow(&env, &renter, id);
@@ -222,6 +224,43 @@ impl EscrowContract {
             .persistent()
             .get(&DataKey::PartyEscrows(party))
             .unwrap_or(Vec::new(&env))
+    }
+
+    /// When `create_escrow` was called with `requires_host_acceptance =
+    /// true`, the host must call this before the renter can `deposit` -
+    /// otherwise a renter could lock a host into rental terms they never
+    /// agreed to. A no-op requirement for the (default) non-gated case,
+    /// where `deposit` never checks `host_accepted` in the first place.
+    pub fn accept_escrow(env: Env, host: Address, escrow_id: u32) {
+        host.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.host != host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        escrow.host_accepted = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+    }
+
+    /// Host declines proposed terms outright, cancelling the escrow before
+    /// any funds move.
+    pub fn reject_escrow(env: Env, host: Address, escrow_id: u32) {
+        host.require_auth();
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.host != host {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
+        if escrow.status != EscrowStatus::Created {
+            panic_with_error!(&env, Error::InvalidState);
+        }
+        escrow.status = EscrowStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
     }
 
     /// Append a milestone to an escrow that hasn't been funded yet. Only
@@ -305,6 +344,9 @@ impl EscrowContract {
         }
         if escrow.status != EscrowStatus::Created {
             panic_with_error!(&env, Error::InvalidState);
+        }
+        if !escrow.host_accepted {
+            panic_with_error!(&env, Error::HostAcceptancePending);
         }
 
         let token = soroban_sdk::token::Client::new(&env, &escrow.asset);

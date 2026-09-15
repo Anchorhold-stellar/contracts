@@ -31,7 +31,7 @@ fn happy_path_single_milestone_early_confirm() {
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
 
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     let escrow = client.get_escrow(&escrow_id);
@@ -82,7 +82,7 @@ fn dispute_flow_majority_vote() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     let dispute_id = client.raise_dispute(
@@ -115,7 +115,7 @@ fn cancel_escrow_before_funding() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 
     // host (not just the renter who created it) can also call it off before funding
     client.cancel_escrow(&host, &escrow_id);
@@ -144,7 +144,7 @@ fn cancel_escrow_after_funding_fails() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.cancel_escrow(&renter, &escrow_id);
@@ -170,7 +170,7 @@ fn cancel_escrow_by_stranger_fails() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 
     client.cancel_escrow(&stranger, &escrow_id);
 }
@@ -196,7 +196,7 @@ fn mutual_cancel_refunds_unreleased_milestones() {
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
     milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     // release the first milestone early so only the second is refundable
@@ -237,7 +237,7 @@ fn mutual_cancel_on_disputed_escrow_fails() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -266,7 +266,7 @@ fn protocol_fee_is_deducted_from_release_and_sent_to_treasury() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.confirm_milestone(&renter, &escrow_id, &0);
 
@@ -337,7 +337,7 @@ fn juror_params_are_configurable_and_enforced() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -386,7 +386,7 @@ fn parties_cannot_be_drawn_as_jurors_on_their_own_dispute() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -445,7 +445,7 @@ fn juror_cannot_withdraw_while_assigned_to_open_dispute() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -475,7 +475,7 @@ fn juror_can_withdraw_after_dispute_resolves() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
     client.vote_dispute(&juror, &escrow_id, &true);
@@ -532,7 +532,7 @@ fn force_resolve_before_deadline_fails() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -563,7 +563,7 @@ fn force_resolve_splits_funds_after_deadline_with_no_votes() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -606,7 +606,7 @@ fn add_and_remove_milestone_before_funding() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "move-out"), &40_0000000i128, &999_999u64);
     let escrow = client.get_escrow(&escrow_id);
@@ -639,7 +639,7 @@ fn cannot_remove_last_remaining_milestone() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "only one"), 60_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 
     client.remove_milestone(&renter, &escrow_id, &0);
 }
@@ -664,7 +664,7 @@ fn cannot_edit_milestones_after_funding() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "extra"), &10_0000000i128, &0u64);
@@ -697,7 +697,7 @@ fn minority_juror_is_slashed_and_majority_rewarded() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -747,7 +747,7 @@ fn slash_with_no_matching_asset_majority_juror_is_not_misdirected() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -783,7 +783,7 @@ fn cannot_create_escrow_with_same_renter_and_host() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
-    client.create_escrow(&renter, &renter, &asset_address, &milestones);
+    client.create_escrow(&renter, &renter, &asset_address, &milestones, &false);
 }
 
 #[test]
@@ -806,7 +806,7 @@ fn raise_dispute_requires_non_empty_evidence() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, ""));
@@ -832,7 +832,7 @@ fn create_escrow_rejects_out_of_order_offsets() {
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
-    client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 }
 
 #[test]
@@ -854,7 +854,7 @@ fn add_milestone_rejects_offset_earlier_than_previous() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "too-early"), &10_0000000i128, &0u64);
 }
@@ -879,7 +879,7 @@ fn paused_contract_rejects_new_escrows() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
-    client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
 }
 
 #[test]
@@ -901,7 +901,7 @@ fn pausing_does_not_freeze_already_active_escrows() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "check-in deposit"), 100_0000000i128, 0u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     // pause hits *after* this escrow is already active
@@ -944,7 +944,7 @@ fn custom_slash_rate_is_applied_instead_of_default() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
 
@@ -999,7 +999,7 @@ fn low_reputation_address_cannot_register_as_juror_once_gated() {
     }
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &bad_host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &bad_host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
     client.raise_dispute(&bad_host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
     let dispute = client.get_dispute(&escrow_id).unwrap();
@@ -1058,7 +1058,7 @@ fn confirm_all_milestones_releases_every_remaining_one() {
     milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
     milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, 500u64));
     milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.confirm_all_milestones(&renter, &escrow_id);
@@ -1092,7 +1092,7 @@ fn confirm_all_milestones_skips_already_released_ones() {
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
     milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.confirm_milestone(&renter, &escrow_id, &0);
@@ -1122,7 +1122,7 @@ fn renter_can_extend_a_milestone_deadline() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     let before = client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at;
@@ -1155,7 +1155,7 @@ fn extend_milestone_deadline_rejects_excessive_extension() {
 
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
-    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
     client.extend_milestone_deadline(&renter, &escrow_id, &0, &(366 * 24 * 60 * 60));
@@ -1181,8 +1181,8 @@ fn party_escrow_index_tracks_both_renter_and_host() {
     let mut milestones = Vec::new(&env);
     milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
 
-    let escrow_1 = client.create_escrow(&renter, &host, &asset_address, &milestones);
-    let escrow_2 = client.create_escrow(&renter, &other_host, &asset_address, &milestones);
+    let escrow_1 = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    let escrow_2 = client.create_escrow(&renter, &other_host, &asset_address, &milestones, &false);
 
     let renter_escrows = client.get_escrows_for_party(&renter);
     assert_eq!(renter_escrows.len(), 2);
@@ -1195,4 +1195,104 @@ fn party_escrow_index_tracks_both_renter_and_host() {
 
     let stranger_escrows = client.get_escrows_for_party(&Address::generate(&env));
     assert!(stranger_escrows.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #28)")] // HostAcceptancePending
+fn deposit_blocked_until_host_accepts_when_gated() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.deposit(&renter, &escrow_id);
+}
+
+#[test]
+fn deposit_succeeds_after_host_accepts_gated_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.accept_escrow(&host, &escrow_id);
+    client.deposit(&renter, &escrow_id);
+
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Active);
+}
+
+#[test]
+fn host_can_reject_a_gated_escrow_before_funding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.reject_escrow(&host, &escrow_id);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Cancelled);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn only_host_can_accept_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.accept_escrow(&renter, &escrow_id);
 }
