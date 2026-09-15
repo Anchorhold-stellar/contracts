@@ -46,6 +46,13 @@ pub struct Escrow {
 
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct JurorStakeInfo {
+    pub asset: Address,
+    pub amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct JurorParams {
     pub min_stake: i128,
     pub jury_size: u32,

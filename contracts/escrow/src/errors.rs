@@ -23,4 +23,6 @@ pub enum Error {
     NoJurorsAvailable = 17,
     FeeTooHigh = 18,
     InvalidJurySize = 19,
+    AssetMismatch = 20,
+    JurorHasActiveDispute = 21,
 }

@@ -394,3 +394,115 @@ fn parties_cannot_be_drawn_as_jurors_on_their_own_dispute() {
     assert!(!dispute.jurors.contains(&host));
     assert!(dispute.jurors.contains(&neutral));
 }
+
+#[test]
+fn juror_can_withdraw_stake_when_idle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&juror, &200_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.register_juror(&juror, &asset_address, &150_0000000);
+    assert_eq!(token_client.balance(&juror), 50_0000000);
+
+    client.withdraw_juror_stake(&juror);
+    assert_eq!(token_client.balance(&juror), 200_0000000);
+    assert!(client.get_juror_stake(&juror).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #21)")] // JurorHasActiveDispute
+fn juror_cannot_withdraw_while_assigned_to_open_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+    token_admin_client.mint(&juror, &200_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1);
+    client.register_juror(&juror, &asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    client.withdraw_juror_stake(&juror);
+}
+
+#[test]
+fn juror_can_withdraw_after_dispute_resolves() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+    token_admin_client.mint(&juror, &200_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1);
+    client.register_juror(&juror, &asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 50_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+    client.vote_dispute(&juror, &escrow_id, &true);
+    client.resolve_dispute(&escrow_id);
+
+    // now idle again - withdrawal should succeed
+    client.withdraw_juror_stake(&juror);
+    assert!(client.get_juror_stake(&juror).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")] // AssetMismatch
+fn re_registering_with_a_different_asset_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_a = create_token_contract(&env, &admin);
+    let token_b = create_token_contract(&env, &admin);
+    token_a.mint(&juror, &200_0000000);
+    token_b.mint(&juror, &200_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.register_juror(&juror, &token_a.address, &100_0000000);
+    client.register_juror(&juror, &token_b.address, &100_0000000);
+}
