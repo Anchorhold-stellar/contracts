@@ -1571,3 +1571,83 @@ fn add_milestone_rejects_past_the_cap() {
 
     client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "one too many"), &1_0000000i128, &50u64);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")] // NotYetExpired
+fn expire_unfunded_escrow_too_early_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    client.expire_unfunded_escrow(&escrow_id);
+}
+
+#[test]
+fn expire_unfunded_escrow_after_window_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 30 * 24 * 60 * 60 + 1);
+
+    client.expire_unfunded_escrow(&escrow_id);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Cancelled);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")] // InvalidState
+fn cannot_expire_an_already_funded_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 30 * 24 * 60 * 60 + 1);
+
+    client.expire_unfunded_escrow(&escrow_id);
+}
