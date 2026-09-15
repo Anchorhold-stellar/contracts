@@ -36,4 +36,5 @@ pub enum Error {
     TooManyMilestones = 30,
     NotYetExpired = 31,
     InvalidVotingWindow = 32,
+    ArbitrationFeeTooHigh = 33,
 }

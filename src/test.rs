@@ -323,7 +323,7 @@ fn juror_params_are_configurable_and_enforced() {
     client.initialize(&admin);
 
     // shrink the jury to 1 and raise the minimum stake
-    client.set_juror_params(&admin, &500_0000000, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN);
+    client.set_juror_params(&admin, &500_0000000, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &0);
     let params = client.get_juror_params();
     assert_eq!(params.jury_size, 1);
     assert_eq!(params.min_stake, 500_0000000);
@@ -356,7 +356,7 @@ fn even_jury_size_is_rejected() {
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
 
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &4, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &4, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &0);
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn juror_cannot_withdraw_while_assigned_to_open_dispute() {
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &0);
     client.register_juror(&juror, &asset_address, &100_0000000);
 
     let mut milestones = Vec::new(&env);
@@ -470,7 +470,7 @@ fn juror_can_withdraw_after_dispute_resolves() {
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &0);
     client.register_juror(&juror, &asset_address, &100_0000000);
 
     let mut milestones = Vec::new(&env);
@@ -931,7 +931,7 @@ fn custom_slash_rate_is_applied_instead_of_default() {
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
     // double the default slash rate: 20% instead of 10%
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &2000, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &2000, &i32::MIN, &0);
     assert_eq!(client.get_juror_params().slash_bps, 2000);
 
     let maj1 = Address::generate(&env);
@@ -970,7 +970,7 @@ fn slash_rate_above_cap_is_rejected() {
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
 
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &5001, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &5001, &i32::MIN, &0);
 }
 
 #[test]
@@ -1010,7 +1010,7 @@ fn low_reputation_address_cannot_register_as_juror_once_gated() {
     assert!(client.get_reputation(&bad_host) < 0);
 
     // now gate juror registration on non-negative reputation
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &0);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &0, &0);
     client.register_juror(&bad_host, &asset_address, &100_0000000);
 }
 
@@ -1029,7 +1029,7 @@ fn neutral_reputation_address_can_still_register_once_gated() {
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &0);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &0, &0);
 
     // default reputation (0) meets a min_reputation of 0
     client.register_juror(&juror, &asset_address, &100_0000000);
@@ -1737,7 +1737,7 @@ fn active_dispute_count_reflects_open_assignments() {
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
     client.initialize(&admin);
-    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &1, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &0);
 
     let juror = Address::generate(&env);
     token_admin_client.mint(&juror, &200_0000000);
@@ -1808,4 +1808,111 @@ fn dispute_voting_window_rejects_out_of_bounds_values() {
     client.initialize(&admin);
 
     client.set_dispute_voting_window(&admin, &30); // well under the 1-hour floor
+}
+
+#[test]
+fn jurors_earn_arbitration_fee_on_unanimous_resolved_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    // 5% arbitration fee, 3 jurors
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &500);
+
+    let jurors = [Address::generate(&env), Address::generate(&env), Address::generate(&env)];
+    for j in &jurors {
+        token_admin_client.mint(j, &200_0000000);
+        client.register_juror(j, &asset_address, &100_0000000);
+    }
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 300_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let juror_balances_before: [i128; 3] = jurors.each_ref().map(|j| token_client.balance(j));
+    let renter_balance_before = token_client.balance(&renter);
+
+    // everyone agrees - no minority, so no slashing, but jurors should
+    // still earn the arbitration fee for doing the work
+    for j in &jurors {
+        client.vote_dispute(j, &escrow_id, &0, &true);
+    }
+    client.resolve_dispute(&escrow_id, &0);
+
+    // 5% of 300 = 15, split 3 ways = 5 each
+    for (j, before) in jurors.iter().zip(juror_balances_before.iter()) {
+        assert_eq!(token_client.balance(j) - before, 5_0000000i128);
+    }
+    // renter wins 300, minus the 15 arbitration fee = 285
+    assert_eq!(token_client.balance(&renter) - renter_balance_before, 285_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #33)")] // ArbitrationFeeTooHigh
+fn arbitration_fee_above_cap_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &1001);
+}
+
+#[test]
+fn stale_dispute_fallback_does_not_pay_arbitration_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    client.set_juror_params(&admin, &DEFAULT_MIN_JUROR_STAKE, &3, &DEFAULT_JUROR_SLASH_BPS, &i32::MIN, &500);
+
+    let juror = Address::generate(&env);
+    token_admin_client.mint(&juror, &200_0000000);
+    client.register_juror(&juror, &asset_address, &100_0000000);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "damage deposit"), 100_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.raise_dispute(&host, &escrow_id, &0, &String::from_str(&env, "ipfs://evidence"));
+
+    let juror_balance_before = token_client.balance(&juror);
+    let renter_balance_before = token_client.balance(&renter);
+
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3 * 24 * 60 * 60 + 1);
+    client.force_resolve_stale_dispute(&escrow_id, &0);
+
+    // jurors never voted, so they get nothing here - only resolve_dispute
+    // pays the arbitration fee
+    assert_eq!(token_client.balance(&juror), juror_balance_before);
+    assert_eq!(token_client.balance(&renter) - renter_balance_before, 50_0000000i128);
+    assert_eq!(token_client.balance(&host), 50_0000000i128);
 }
