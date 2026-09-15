@@ -1368,13 +1368,57 @@ fn admin_can_be_rotated_and_new_admin_takes_effect() {
     assert_eq!(client.get_admin(), admin);
 
     client.transfer_admin(&admin, &new_admin);
+    // proposing alone must not switch admin over yet
+    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    client.accept_admin_transfer(&new_admin);
     assert_eq!(client.get_admin(), new_admin);
+    assert!(client.get_pending_admin().is_none());
 
     // the old admin key no longer has any power...
     let err = client.try_set_fee_config(&admin, &500, &treasury);
     assert!(err.is_err());
     // ...only the new one does
     client.set_fee_config(&new_admin, &500, &treasury);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn only_the_proposed_address_can_accept_admin_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin_transfer(&stranger);
+}
+
+#[test]
+fn old_admin_retains_power_until_transfer_is_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // a typo'd/unresponsive new_admin doesn't brick the contract - the old
+    // admin key still works until the handoff is actually accepted
+    client.transfer_admin(&admin, &new_admin);
+    client.set_fee_config(&admin, &500, &treasury);
+    assert_eq!(client.get_fee_config().unwrap().bps, 500);
 }
 
 #[test]

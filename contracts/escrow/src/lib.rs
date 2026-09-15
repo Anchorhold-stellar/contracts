@@ -74,6 +74,7 @@ pub enum DataKey {
     ActiveDisputeCount(Address),
     Paused,
     PartyEscrows(Address),
+    PendingAdmin,
 }
 
 #[contract]
@@ -98,9 +99,33 @@ impl EscrowContract {
     /// escrows (see `initialize`'s doc comment) - this only matters for
     /// fee config, juror params, and pause/unpause - but a compromised or
     /// lost admin key should still be replaceable without redeploying.
+    ///
+    /// This only proposes the handoff - `new_admin` must independently call
+    /// `accept_admin_transfer` to finalize it. A one-step transfer means a
+    /// typo'd address permanently bricks every admin-gated function with no
+    /// recovery path; requiring the new admin's own signature to accept
+    /// closes that off.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
         Self::require_admin(&env, &current_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+    }
+
+    /// Finalizes a transfer proposed by `transfer_admin`. Must be called by
+    /// the proposed address itself.
+    pub fn accept_admin_transfer(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotAuthorized));
+        if pending != new_admin {
+            panic_with_error!(&env, Error::NotAuthorized);
+        }
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
     }
 
     pub fn get_admin(env: Env) -> Address {
@@ -108,6 +133,10 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotAuthorized))
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     /// Set (or update) the protocol fee taken out of every milestone payout.
