@@ -61,6 +61,7 @@ pub enum DataKey {
     JurorParams,
     ActiveDisputeCount(Address),
     Paused,
+    PartyEscrows(Address),
 }
 
 #[contract]
@@ -203,11 +204,24 @@ impl EscrowContract {
             dispute_id: None,
         };
         env.storage().persistent().set(&DataKey::Escrow(id), &escrow);
+        Self::index_party_escrow(&env, &renter, id);
+        Self::index_party_escrow(&env, &host, id);
 
         env.events()
             .publish((symbol_short!("escrow"), symbol_short!("created")), (id, renter, host, total));
 
         id
+    }
+
+    /// All escrow IDs where `party` is either the renter or the host,
+    /// newest first isn't guaranteed - just insertion order. Meant for the
+    /// indexer/frontend to avoid scanning every escrow ID to find a user's
+    /// history.
+    pub fn get_escrows_for_party(env: Env, party: Address) -> Vec<u32> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PartyEscrows(party))
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Append a milestone to an escrow that hasn't been funded yet. Only
@@ -900,6 +914,18 @@ impl EscrowContract {
             selected.push_back(eligible.get(idx).unwrap());
         }
         selected
+    }
+
+    fn index_party_escrow(env: &Env, party: &Address, escrow_id: u32) {
+        let mut ids: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PartyEscrows(party.clone()))
+            .unwrap_or(Vec::new(env));
+        ids.push_back(escrow_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PartyEscrows(party.clone()), &ids);
     }
 
     fn paused(env: &Env) -> bool {
