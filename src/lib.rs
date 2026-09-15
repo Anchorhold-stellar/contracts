@@ -313,7 +313,7 @@ impl EscrowContract {
             panic_with_error!(&env, Error::EscrowDisputed);
         }
 
-        let jurors = Self::select_jurors(&env, escrow_id);
+        let jurors = Self::select_jurors(&env, escrow_id, &escrow.renter, &escrow.host);
         let dispute = Dispute {
             escrow_id,
             milestone_index,
@@ -547,17 +547,27 @@ impl EscrowContract {
     }
 
     /// Naive juror selection: pull the first JURY_SIZE addresses from the
-    /// pool. Replace with weighted-random selection (e.g. VRF or a
+    /// pool (excluding the two parties to this escrow - a renter or host
+    /// who also registered as a juror must not be able to sit on their own
+    /// dispute). Replace with weighted-random selection (e.g. VRF or a
     /// commit-reveal seed) before relying on this for anything real —
     /// deterministic "first N" selection is trivially gameable.
-    fn select_jurors(env: &Env, seed_escrow_id: u32) -> Vec<Address> {
+    fn select_jurors(env: &Env, seed_escrow_id: u32, renter: &Address, host: &Address) -> Vec<Address> {
         let pool: Vec<Address> = env
             .storage()
             .persistent()
             .get(&DataKey::JurorPool)
             .unwrap_or(Vec::new(env));
+
+        let mut eligible = Vec::new(env);
+        for candidate in pool.iter() {
+            if &candidate != renter && &candidate != host {
+                eligible.push_back(candidate);
+            }
+        }
+
         let mut selected = Vec::new(env);
-        let pool_len = pool.len();
+        let pool_len = eligible.len();
         if pool_len == 0 {
             panic_with_error!(env, Error::NoJurorsAvailable);
         }
@@ -566,10 +576,10 @@ impl EscrowContract {
         // rotate the starting index by escrow id so consecutive disputes
         // don't always draw the same jurors — still not sybil-resistant,
         // see the note above.
-        let start = (seed_escrow_id as u32) % pool_len;
+        let start = seed_escrow_id % pool_len;
         for i in 0..take {
             let idx = (start + i) % pool_len;
-            selected.push_back(pool.get(idx).unwrap());
+            selected.push_back(eligible.get(idx).unwrap());
         }
         selected
     }
