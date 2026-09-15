@@ -1160,3 +1160,39 @@ fn extend_milestone_deadline_rejects_excessive_extension() {
 
     client.extend_milestone_deadline(&renter, &escrow_id, &0, &(366 * 24 * 60 * 60));
 }
+
+#[test]
+fn party_escrow_index_tracks_both_renter_and_host() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+    let other_host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+
+    let escrow_1 = client.create_escrow(&renter, &host, &asset_address, &milestones);
+    let escrow_2 = client.create_escrow(&renter, &other_host, &asset_address, &milestones);
+
+    let renter_escrows = client.get_escrows_for_party(&renter);
+    assert_eq!(renter_escrows.len(), 2);
+    assert!(renter_escrows.contains(&escrow_1));
+    assert!(renter_escrows.contains(&escrow_2));
+
+    let host_escrows = client.get_escrows_for_party(&host);
+    assert_eq!(host_escrows.len(), 1);
+    assert_eq!(host_escrows.get(0).unwrap(), escrow_1);
+
+    let stranger_escrows = client.get_escrows_for_party(&Address::generate(&env));
+    assert!(stranger_escrows.is_empty());
+}
