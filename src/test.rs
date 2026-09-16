@@ -2410,3 +2410,92 @@ fn unfunded_dispute_attempt_cannot_drain_other_escrows_pooled_funds() {
     // the pooled balance backing the victim's real escrow is untouched
     assert_eq!(token_client.balance(&contract_id), 500_0000000i128);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #28)")] // HostAcceptancePending
+fn adding_a_milestone_after_acceptance_revokes_it() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.accept_escrow(&host, &escrow_id);
+    assert!(client.get_escrow(&escrow_id).host_accepted);
+
+    // renter sneaks in a bigger milestone after the host signed off on the
+    // original, smaller terms
+    client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "surprise fee"), &500_0000000i128, &999_999u64);
+    assert!(!client.get_escrow(&escrow_id).host_accepted);
+
+    // deposit must be blocked until the host reviews and re-accepts the
+    // actual terms they're now bound to
+    client.deposit(&renter, &escrow_id);
+}
+
+#[test]
+fn removing_a_milestone_after_acceptance_also_revokes_it() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 30_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.accept_escrow(&host, &escrow_id);
+    client.remove_milestone(&renter, &escrow_id, &1);
+    assert!(!client.get_escrow(&escrow_id).host_accepted);
+}
+
+#[test]
+fn editing_milestones_on_an_ungated_escrow_does_not_touch_host_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // requires_host_acceptance = false: host_accepted starts true and was
+    // never a real consent signal, so editing terms shouldn't block it
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.add_milestone(&renter, &escrow_id, &String::from_str(&env, "move-out"), &30_0000000i128, &999_999u64);
+    assert!(client.get_escrow(&escrow_id).host_accepted);
+
+    client.deposit(&renter, &escrow_id);
+}

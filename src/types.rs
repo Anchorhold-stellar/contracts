@@ -50,6 +50,12 @@ pub struct Escrow {
     /// directly rather than adding a new EscrowStatus, so the common
     /// (unrequested) case stays a plain Created -> Active transition.
     pub host_accepted: bool,
+    /// Whether this escrow was created with a host-acceptance gate at all.
+    /// Kept separate from `host_accepted` so add_milestone/remove_milestone
+    /// know whether an acceptance actually needs revoking when terms
+    /// change, versus an ungated escrow where `host_accepted` is just
+    /// permanently true and never meant anything.
+    pub requires_host_acceptance: bool,
     /// Ledger timestamp at creation - used by `expire_unfunded_escrow` to
     /// clean up escrows nobody ever funded.
     pub created_at: u64,
