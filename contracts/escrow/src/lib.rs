@@ -351,6 +351,7 @@ impl EscrowContract {
             status: EscrowStatus::Created,
             dispute_id: None,
             host_accepted: !requires_host_acceptance,
+            requires_host_acceptance,
             created_at: env.ledger().timestamp(),
             ever_disputed: false,
         };
@@ -454,6 +455,7 @@ impl EscrowContract {
             auto_release_at: 0,
         });
         escrow.total_amount += amount;
+        Self::revoke_stale_acceptance(&mut escrow);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -480,6 +482,7 @@ impl EscrowContract {
 
         escrow.total_amount -= m.amount;
         escrow.milestones.remove(milestone_index);
+        Self::revoke_stale_acceptance(&mut escrow);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -1297,6 +1300,18 @@ impl EscrowContract {
             selected.push_back(eligible.get(idx).unwrap());
         }
         selected
+    }
+
+    /// If the host already accepted this escrow's terms, changing the
+    /// milestone list invalidates that acceptance - otherwise a renter
+    /// could get sign-off on one set of terms and then swap in different
+    /// ones before depositing, and the host would be bound to terms they
+    /// never actually saw. No-op for ungated escrows, where
+    /// `host_accepted` was never a real consent signal to begin with.
+    fn revoke_stale_acceptance(escrow: &mut Escrow) {
+        if escrow.requires_host_acceptance {
+            escrow.host_accepted = false;
+        }
     }
 
     fn index_party_escrow(env: &Env, party: &Address, escrow_id: u32) {
