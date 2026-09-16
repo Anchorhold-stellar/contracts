@@ -67,11 +67,14 @@ const MAX_ADDITIONAL_EVIDENCE: u32 = 10;
 /// been disputed - small on purpose (dispute wins are worth +2) since this
 /// rewards the common case, not an adversarial outcome.
 const CLEAN_COMPLETION_REPUTATION_BONUS: i32 = 1;
-/// How long an escrow can sit in `Created` (never funded, never cancelled)
+/// Default (admin-configurable, see set_unfunded_expiry_window) length of
+/// time an escrow can sit in `Created` (never funded, never cancelled)
 /// before anyone can permissionlessly expire it - same "someone has to be
 /// able to clean this up" rationale as check_auto_release and
 /// force_resolve_stale_dispute.
-const UNFUNDED_EXPIRY_WINDOW: u64 = 30 * 24 * 60 * 60;
+const DEFAULT_UNFUNDED_EXPIRY_WINDOW: u64 = 30 * 24 * 60 * 60;
+const MIN_UNFUNDED_EXPIRY_WINDOW: u64 = 24 * 60 * 60; // 1 day
+const MAX_UNFUNDED_EXPIRY_WINDOW: u64 = 365 * 24 * 60 * 60; // 1 year
 const BPS_DENOMINATOR: i128 = 10_000;
 
 #[contracttype]
@@ -93,6 +96,7 @@ pub enum DataKey {
     DisputeVotingWindow,
     FeeExempt(Address),
     StakeWeightedVoting,
+    UnfundedExpiryWindow,
 }
 
 #[contract]
@@ -173,6 +177,23 @@ impl EscrowContract {
 
     pub fn get_dispute_voting_window(env: Env) -> u64 {
         Self::dispute_voting_window(&env)
+    }
+
+    /// How long an unfunded escrow can sit in `Created` before anyone can
+    /// call `expire_unfunded_escrow` on it. Bounded to
+    /// [MIN_UNFUNDED_EXPIRY_WINDOW, MAX_UNFUNDED_EXPIRY_WINDOW].
+    pub fn set_unfunded_expiry_window(env: Env, admin: Address, seconds: u64) {
+        Self::require_admin(&env, &admin);
+        if !(MIN_UNFUNDED_EXPIRY_WINDOW..=MAX_UNFUNDED_EXPIRY_WINDOW).contains(&seconds) {
+            panic_with_error!(&env, Error::InvalidExpiryWindow);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::UnfundedExpiryWindow, &seconds);
+    }
+
+    pub fn get_unfunded_expiry_window(env: Env) -> u64 {
+        Self::unfunded_expiry_window(&env)
     }
 
     /// Set (or update) the protocol fee taken out of every milestone payout.
@@ -618,17 +639,17 @@ impl EscrowContract {
     }
 
     /// Permissionless cleanup for an escrow nobody ever funded or
-    /// explicitly cancelled - anyone can call this once
-    /// `UNFUNDED_EXPIRY_WINDOW` has passed since creation, same keeper
-    /// pattern as `check_auto_release`. No funds move (none were ever
-    /// deposited); this only clears out storage that would otherwise sit
-    /// abandoned indefinitely.
+    /// explicitly cancelled - anyone can call this once the (admin-
+    /// configurable, see set_unfunded_expiry_window) window has passed
+    /// since creation, same keeper pattern as `check_auto_release`. No
+    /// funds move (none were ever deposited); this only clears out storage
+    /// that would otherwise sit abandoned indefinitely.
     pub fn expire_unfunded_escrow(env: Env, escrow_id: u32) {
         let mut escrow = Self::load_escrow(&env, escrow_id);
         if escrow.status != EscrowStatus::Created {
             panic_with_error!(&env, Error::InvalidState);
         }
-        if env.ledger().timestamp() < escrow.created_at + UNFUNDED_EXPIRY_WINDOW {
+        if env.ledger().timestamp() < escrow.created_at + Self::unfunded_expiry_window(&env) {
             panic_with_error!(&env, Error::NotYetExpired);
         }
         escrow.status = EscrowStatus::Cancelled;
@@ -1561,6 +1582,13 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::DisputeVotingWindow)
             .unwrap_or(DEFAULT_DISPUTE_VOTING_WINDOW)
+    }
+
+    fn unfunded_expiry_window(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::UnfundedExpiryWindow)
+            .unwrap_or(DEFAULT_UNFUNDED_EXPIRY_WINDOW)
     }
 
     fn juror_params(env: &Env) -> JurorParams {
