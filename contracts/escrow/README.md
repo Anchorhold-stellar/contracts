@@ -132,6 +132,7 @@ can't permanently brick it) can:
 | Juror requirements | `set_juror_params(min_stake, jury_size, slash_bps, min_reputation, arbitration_fee_bps)` |
 | Stake-weighted voting | `set_stake_weighted_voting(bool)` |
 | Dispute voting window | `set_dispute_voting_window(seconds)` — bounded [1h, 30d] |
+| Unfunded-escrow expiry window | `set_unfunded_expiry_window(seconds)` — bounded [1d, 1y] |
 | Emergency pause | `set_paused(bool)` — blocks only new `create_escrow`/`deposit`, never touches escrows already active |
 
 None of these let the admin touch a specific escrow's funds, pick a
@@ -171,6 +172,7 @@ Two independent, additive fees, both computed in basis points
 **Admin / governance:** `initialize`, `transfer_admin`,
 `accept_admin_transfer`, `get_admin`, `get_pending_admin`,
 `set_dispute_voting_window`, `get_dispute_voting_window`,
+`set_unfunded_expiry_window`, `get_unfunded_expiry_window`,
 `set_fee_config`, `get_fee_config`, `set_fee_exempt`, `is_fee_exempt`,
 `set_stake_weighted_voting`, `get_stake_weighted_voting`,
 `set_juror_params`, `get_juror_params`, `set_paused`, `is_paused`
@@ -234,6 +236,7 @@ comments on each function in `src/lib.rs`.
 | 32 | `InvalidVotingWindow` | Voting window outside `[1h, 30d]` |
 | 33 | `ArbitrationFeeTooHigh` | Arbitration fee above `MAX_ARBITRATION_FEE_BPS` |
 | 34 | `TooMuchEvidence` | Additional evidence above `MAX_ADDITIONAL_EVIDENCE` entries |
+| 35 | `InvalidExpiryWindow` | Unfunded-escrow expiry window outside `[1d, 1y]` |
 
 ## Building, testing, deploying
 
