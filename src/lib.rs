@@ -816,6 +816,7 @@ impl EscrowContract {
         for j in jurors.iter() {
             Self::inc_active_dispute_count(&env, &j);
         }
+        let juror_params = Self::juror_params(&env);
         let dispute = Dispute {
             escrow_id,
             milestone_index,
@@ -829,6 +830,9 @@ impl EscrowContract {
             outcome: DisputeOutcome::Pending,
             voting_deadline: env.ledger().timestamp() + Self::dispute_voting_window(&env),
             additional_evidence: Vec::new(&env),
+            slash_bps: juror_params.slash_bps,
+            arbitration_fee_bps: juror_params.arbitration_fee_bps,
+            stake_weighted: Self::get_stake_weighted_voting(env.clone()),
         };
         env.storage()
             .persistent()
@@ -1110,7 +1114,7 @@ impl EscrowContract {
         let m = escrow.milestones.get(dispute.milestone_index).unwrap();
         let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
 
-        let arbitration_fee_bps = Self::juror_params(&env).arbitration_fee_bps;
+        let arbitration_fee_bps = dispute.arbitration_fee_bps;
         let arbitration_fee = (m.amount * arbitration_fee_bps as i128) / BPS_DENOMINATOR;
         if arbitration_fee > 0 && !dispute.jurors.is_empty() {
             let share = arbitration_fee / dispute.jurors.len() as i128;
@@ -1459,7 +1463,7 @@ impl EscrowContract {
             (&dispute.votes_for_host, &dispute.votes_for_renter)
         };
 
-        let slash_bps = Self::juror_params(env).slash_bps;
+        let slash_bps = dispute.slash_bps;
         let mut slash_assets: Vec<Address> = Vec::new(env);
         let mut slash_amounts: Vec<i128> = Vec::new(env);
 
@@ -1588,14 +1592,17 @@ impl EscrowContract {
     }
 
     /// Returns (renter_weight, host_weight) for a dispute's votes so far.
-    /// Under flat voting (the default) each vote is worth 1. Under
-    /// stake-weighted voting each vote is worth that juror's current
-    /// staked amount - a juror who withdrew their stake between voting and
-    /// resolution (shouldn't normally happen, since withdrawal is blocked
-    /// while assigned to an unresolved dispute) contributes 0 rather than
-    /// panicking.
+    /// Uses `dispute.stake_weighted`, snapshotted from
+    /// get_stake_weighted_voting when the dispute was opened - not
+    /// whatever the admin has it set to *now* - so toggling the setting
+    /// mid-dispute can't flip an outcome jurors already voted under.
+    /// Under flat voting each vote is worth 1; under stake-weighted voting
+    /// each vote is worth that juror's current staked amount - a juror who
+    /// withdrew their stake between voting and resolution (shouldn't
+    /// normally happen, since withdrawal is blocked while assigned to an
+    /// unresolved dispute) contributes 0 rather than panicking.
     fn tally_votes(env: &Env, dispute: &Dispute) -> (i128, i128) {
-        if !Self::get_stake_weighted_voting(env.clone()) {
+        if !dispute.stake_weighted {
             return (dispute.votes_for_renter.len() as i128, dispute.votes_for_host.len() as i128);
         }
         let weight_of = |juror: Address| -> i128 {

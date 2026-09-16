@@ -133,4 +133,15 @@ pub struct Dispute {
     /// the other party (or the opener themselves) can add more before
     /// jurors vote.
     pub additional_evidence: Vec<String>,
+    /// The following are snapshotted from JurorParams/StakeWeightedVoting
+    /// at raise_dispute time and used as-is at resolution, instead of
+    /// re-reading whatever the admin has configured *then*. Without this,
+    /// an admin changing slash_bps, arbitration_fee_bps, or
+    /// stake_weighted_voting between when jurors vote and when
+    /// resolve_dispute is called would retroactively change the stakes a
+    /// dispute was decided under - for stake_weighted_voting, toggling it
+    /// mid-dispute could even flip who wins.
+    pub slash_bps: u32,
+    pub arbitration_fee_bps: u32,
+    pub stake_weighted: bool,
 }
