@@ -174,7 +174,8 @@ Two independent, additive fees, both computed in basis points
 
 **Escrow lifecycle:** `create_escrow`, `get_escrows_for_party`,
 `accept_escrow`, `reject_escrow`, `add_milestone`, `remove_milestone`,
-`deposit`, `cancel_escrow`, `expire_unfunded_escrow`, `mutual_cancel`
+`update_milestone`, `deposit`, `cancel_escrow`, `expire_unfunded_escrow`,
+`mutual_cancel`
 
 **Milestone release:** `confirm_milestone`, `confirm_all_milestones`,
 `check_auto_release`, `extend_milestone_deadline`
@@ -186,8 +187,8 @@ Two independent, additive fees, both computed in basis points
 **Jurors:** `register_juror`, `withdraw_juror_stake`, `get_juror_stake`,
 `get_active_dispute_count`
 
-**Read-only queries:** `get_escrow`, `get_dispute`, `get_reputation`,
-`get_escrow_count`
+**Read-only queries:** `get_escrow`, `get_escrow_status`, `get_milestone`,
+`get_dispute`, `get_reputation`, `get_escrow_count`
 
 Full parameter lists and per-function rationale are documented as doc
 comments on each function in `src/lib.rs`.
