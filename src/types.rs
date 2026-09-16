@@ -30,7 +30,15 @@ pub struct Milestone {
     pub auto_release_offset: u64,
     /// Absolute ledger timestamp; set when the escrow is funded.
     pub auto_release_at: u64,
+    /// True once this milestone is no longer pending - either genuinely
+    /// released to the host, or written off via mutual_cancel's refund to
+    /// the renter (see `released_at` for telling those apart).
     pub released: bool,
+    /// Ledger timestamp of an actual release to the host - left at 0 for
+    /// mutual_cancel's refund path, since nothing was "released" there in
+    /// the payout-to-host sense even though `released` is set to keep it
+    /// out of future refund/completion accounting.
+    pub released_at: u64,
 }
 
 #[contracttype]
@@ -112,6 +120,9 @@ pub struct Dispute {
     pub votes_for_renter: Vec<Address>,
     pub votes_for_host: Vec<Address>,
     pub resolved: bool,
+    /// Ledger timestamp this dispute was resolved (normally or via the
+    /// stale-dispute fallback), or 0 if still open.
+    pub resolved_at: u64,
     pub outcome: DisputeOutcome,
     /// Ledger timestamp after which anyone can call
     /// `force_resolve_stale_dispute` if jurors haven't finished voting.

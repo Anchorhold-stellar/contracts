@@ -335,6 +335,7 @@ impl EscrowContract {
                 amount,
                 auto_release_offset: offset,
                 released: false,
+                released_at: 0,
                 auto_release_at: 0, // set on deposit
             });
         }
@@ -452,6 +453,7 @@ impl EscrowContract {
             amount,
             auto_release_offset,
             released: false,
+            released_at: 0,
             auto_release_at: 0,
         });
         escrow.total_amount += amount;
@@ -542,6 +544,7 @@ impl EscrowContract {
                 amount,
                 auto_release_offset,
                 released: false,
+                released_at: 0,
                 auto_release_at: 0,
             },
         );
@@ -821,6 +824,7 @@ impl EscrowContract {
             votes_for_renter: Vec::new(&env),
             votes_for_host: Vec::new(&env),
             resolved: false,
+            resolved_at: 0,
             outcome: DisputeOutcome::Pending,
             voting_deadline: env.ledger().timestamp() + Self::dispute_voting_window(&env),
             additional_evidence: Vec::new(&env),
@@ -1100,6 +1104,7 @@ impl EscrowContract {
             DisputeOutcome::HostWins
         };
         dispute.resolved = true;
+        dispute.resolved_at = env.ledger().timestamp();
 
         let m = escrow.milestones.get(dispute.milestone_index).unwrap();
         let token = soroban_sdk::token::Client::new(&env, &escrow.asset);
@@ -1120,6 +1125,7 @@ impl EscrowContract {
 
         let mut m = m;
         m.released = true;
+        m.released_at = dispute.resolved_at;
         escrow.milestones.set(dispute.milestone_index, m);
 
         // Reputation: winner +2, loser -1. Simple and tunable; the point is
@@ -1184,12 +1190,15 @@ impl EscrowContract {
         Self::pay_out(&env, &token, &escrow.renter, renter_share);
         Self::pay_out(&env, &token, &escrow.host, host_share);
 
-        let mut m = m;
-        m.released = true;
-        escrow.milestones.set(dispute.milestone_index, m);
-
         dispute.outcome = DisputeOutcome::Split;
         dispute.resolved = true;
+        dispute.resolved_at = env.ledger().timestamp();
+
+        let mut m = m;
+        m.released = true;
+        m.released_at = dispute.resolved_at;
+        escrow.milestones.set(dispute.milestone_index, m);
+
         for j in dispute.jurors.iter() {
             Self::dec_active_dispute_count(&env, &j);
         }
@@ -1306,6 +1315,7 @@ impl EscrowContract {
         Self::pay_out(env, &token, &escrow.host, m.amount);
 
         m.released = true;
+        m.released_at = env.ledger().timestamp();
         let amount = m.amount;
         escrow.milestones.set(milestone_index, m);
 
