@@ -2555,3 +2555,88 @@ fn get_milestone_rejects_out_of_range_index() {
 
     client.get_milestone(&escrow_id, &5);
 }
+
+#[test]
+fn update_milestone_edits_in_place_and_adjusts_total() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, 500u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 30_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    client.update_milestone(&renter, &escrow_id, &1, &String::from_str(&env, "midterm (revised)"), &50_0000000i128, &600u64);
+
+    let escrow = client.get_escrow(&escrow_id);
+    assert_eq!(escrow.milestones.len(), 3); // position preserved, not removed+re-added at the end
+    assert_eq!(escrow.total_amount, 110_0000000i128); // 30 + 50 + 30
+    let updated = client.get_milestone(&escrow_id, &1);
+    assert_eq!(updated.description, String::from_str(&env, "midterm (revised)"));
+    assert_eq!(updated.amount, 50_0000000i128);
+    assert_eq!(updated.auto_release_offset, 600);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")] // NonChronologicalMilestones
+fn update_milestone_rejects_offset_conflicting_with_next_neighbor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, 500u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 30_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    // pushing milestone 0's offset past milestone 1's breaks ordering
+    client.update_milestone(&renter, &escrow_id, &0, &String::from_str(&env, "move-in"), &30_0000000i128, &600u64);
+}
+
+#[test]
+fn update_milestone_on_gated_escrow_revokes_acceptance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &true);
+
+    client.accept_escrow(&host, &escrow_id);
+    client.update_milestone(&renter, &escrow_id, &0, &String::from_str(&env, "move-in (bigger)"), &500_0000000i128, &0u64);
+    assert!(!client.get_escrow(&escrow_id).host_accepted);
+}
