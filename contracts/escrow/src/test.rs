@@ -2499,3 +2499,59 @@ fn editing_milestones_on_an_ungated_escrow_does_not_touch_host_accepted() {
 
     client.deposit(&renter, &escrow_id);
 }
+
+#[test]
+fn get_escrow_status_and_get_milestone_match_get_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 30_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    assert_eq!(client.get_escrow_status(&escrow_id), EscrowStatus::Created);
+    assert_eq!(
+        client.get_milestone(&escrow_id, &1).description,
+        String::from_str(&env, "move-out")
+    );
+
+    client.deposit(&renter, &escrow_id);
+    assert_eq!(client.get_escrow_status(&escrow_id), EscrowStatus::Active);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")] // InvalidMilestone
+fn get_milestone_rejects_out_of_range_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    client.get_milestone(&escrow_id, &5);
+}

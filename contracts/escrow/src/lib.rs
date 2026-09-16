@@ -1150,6 +1150,23 @@ impl EscrowContract {
         Self::load_escrow(&env, escrow_id)
     }
 
+    /// Lighter-weight than get_escrow when a caller only needs to poll
+    /// status - still deserializes the whole Escrow under the hood (there's
+    /// no cheaper storage layout for it here), but saves the caller from
+    /// having to know the Escrow shape just to read one field.
+    pub fn get_escrow_status(env: Env, escrow_id: u32) -> EscrowStatus {
+        Self::load_escrow(&env, escrow_id).status
+    }
+
+    /// Fetch a single milestone without pulling every other milestone on
+    /// the escrow along with it.
+    pub fn get_milestone(env: Env, escrow_id: u32, milestone_index: u32) -> Milestone {
+        Self::load_escrow(&env, escrow_id)
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone))
+    }
+
     pub fn get_dispute(env: Env, escrow_id: u32, milestone_index: u32) -> Option<Dispute> {
         env.storage()
             .persistent()
