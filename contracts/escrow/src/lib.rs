@@ -37,8 +37,9 @@ const DEFAULT_JURY_SIZE: u32 = 3;
 const DEFAULT_DISPUTE_VOTING_WINDOW: u64 = 3 * 24 * 60 * 60;
 const MIN_DISPUTE_VOTING_WINDOW: u64 = 60 * 60; // 1 hour
 const MAX_DISPUTE_VOTING_WINDOW: u64 = 30 * 24 * 60 * 60; // 30 days
-/// Fraction of a minority juror's stake slashed on a resolved (non-stale)
-/// dispute. Redistributed to majority jurors staked in the same asset.
+/// Fraction of a losing-side juror's stake slashed on a resolved
+/// (non-stale) dispute. Redistributed to winning-side jurors staked in
+/// the same asset.
 const DEFAULT_JUROR_SLASH_BPS: u32 = 1000; // 10%
 /// Hard ceiling on the protocol fee, independent of whatever the admin sets:
 /// 20% of a milestone payout, so a compromised or careless admin key can't
@@ -1438,15 +1439,21 @@ impl EscrowContract {
         }
     }
 
-    /// Slashes the configured `slash_bps` of each minority-side juror's stake and
-    /// redistributes it evenly among majority-side jurors staked in the
-    /// same asset as the slashed stake. A minority juror's stake asset
-    /// might not match any majority juror's (jurors aren't required to
+    /// Slashes the configured `slash_bps` of each losing-side juror's stake
+    /// and redistributes it evenly among winning-side jurors staked in the
+    /// same asset as the slashed stake. A losing-side juror's stake asset
+    /// might not match any winning-side juror's (jurors aren't required to
     /// all stake the same asset) - in that case the slashed amount simply
     /// stays put as part of the contract's balance rather than being lost
     /// or misdirected to an unrelated asset's jurors.
+    ///
+    /// "Winning"/"losing" here means whichever side `renter_wins` (the
+    /// already-computed outcome, via `tally_votes`) landed on - under
+    /// stake-weighted voting that's not necessarily the same as whichever
+    /// side had more *voters*, so this isn't a "majority"/"minority" split
+    /// by headcount.
     fn apply_juror_incentives(env: &Env, dispute: &Dispute, renter_wins: bool) {
-        let (majority, minority) = if renter_wins {
+        let (winning_voters, losing_voters) = if renter_wins {
             (&dispute.votes_for_renter, &dispute.votes_for_host)
         } else {
             (&dispute.votes_for_host, &dispute.votes_for_renter)
@@ -1456,7 +1463,7 @@ impl EscrowContract {
         let mut slash_assets: Vec<Address> = Vec::new(env);
         let mut slash_amounts: Vec<i128> = Vec::new(env);
 
-        for juror in minority.iter() {
+        for juror in losing_voters.iter() {
             let mut info: JurorStakeInfo = match env
                 .storage()
                 .persistent()
@@ -1490,7 +1497,7 @@ impl EscrowContract {
             }
 
             let mut eligible: Vec<Address> = Vec::new(env);
-            for juror in majority.iter() {
+            for juror in winning_voters.iter() {
                 if let Some(info) = env
                     .storage()
                     .persistent()
