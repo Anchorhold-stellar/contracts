@@ -2640,3 +2640,67 @@ fn update_milestone_on_gated_escrow_revokes_acceptance() {
     client.update_milestone(&renter, &escrow_id, &0, &String::from_str(&env, "move-in (bigger)"), &500_0000000i128, &0u64);
     assert!(!client.get_escrow(&escrow_id).host_accepted);
 }
+
+#[test]
+fn juror_topup_below_min_stake_succeeds_if_total_clears_it() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&juror, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // well above the 100-unit default minimum
+    client.register_juror(&juror, &asset_address, &500_0000000i128);
+    // a small top-up, far below the minimum on its own, should still
+    // succeed since the resulting total is already well above it
+    client.register_juror(&juror, &asset_address, &1_0000000i128);
+
+    assert_eq!(client.get_juror_stake(&juror).unwrap().amount, 501_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")] // InsufficientStake
+fn juror_first_registration_below_min_stake_still_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&juror, &200_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.register_juror(&juror, &asset_address, &1_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")] // InvalidAmount
+fn register_juror_rejects_non_positive_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let juror = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.register_juror(&juror, &asset_address, &0i128);
+}

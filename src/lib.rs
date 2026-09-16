@@ -851,10 +851,10 @@ impl EscrowContract {
     /// juror (see `JurorStakeInfo`).
     pub fn register_juror(env: Env, juror: Address, asset: Address, stake: i128) {
         juror.require_auth();
-        let params = Self::juror_params(&env);
-        if stake < params.min_stake {
-            panic_with_error!(&env, Error::InsufficientStake);
+        if stake <= 0 {
+            panic_with_error!(&env, Error::InvalidAmount);
         }
+        let params = Self::juror_params(&env);
         if Self::get_reputation(env.clone(), juror.clone()) < params.min_reputation {
             panic_with_error!(&env, Error::ReputationTooLow);
         }
@@ -874,6 +874,12 @@ impl EscrowContract {
             }
             None => stake,
         };
+        // Checked against the resulting total, not just this call's
+        // increment - a juror already well above the minimum shouldn't
+        // need every subsequent top-up to independently clear it too.
+        if total_stake < params.min_stake {
+            panic_with_error!(&env, Error::InsufficientStake);
+        }
         env.storage().persistent().set(
             &DataKey::JurorStake(juror.clone()),
             &JurorStakeInfo { asset, amount: total_stake },
