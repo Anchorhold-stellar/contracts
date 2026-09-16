@@ -88,7 +88,10 @@ nobody ever funded (or explicitly cancelled), after a configurable window.
 
 - Either party calls `raise_dispute(escrow_id, milestone_index, evidence_uri)`
   on a **funded, undisputed, unreleased** milestone. This freezes the whole
-  escrow (only one dispute in flight at a time) and draws a jury.
+  escrow (only one dispute in flight at a time), draws a jury, and
+  snapshots the current slash rate, arbitration fee, and stake-weighted-
+  voting setting onto the dispute record - later admin changes to any of
+  those can't retroactively affect a dispute that's already open.
 - `register_juror(asset, stake)` stakes into a pool; `select_jurors`
   excludes the escrow's own renter/host from being drawn on their own
   dispute, and rotates the starting index by escrow ID so consecutive
@@ -98,10 +101,10 @@ nobody ever funded (or explicitly cancelled), after a configurable window.
   the opener's initial submission.
 - Jurors call `vote_dispute`. Once everyone assigned has voted,
   `resolve_dispute` tallies the outcome (flat headcount by default, or
-  stake-weighted if `set_stake_weighted_voting` is enabled), pays the
-  winner, adjusts both parties' reputation (+2 winner / −1 loser), slashes
-  minority-side juror stakes and redistributes to the majority
-  (`slash_bps`), and pays every voting juror an arbitration fee
+  stake-weighted if the dispute was opened with `stake_weighted_voting`
+  enabled), pays the winner, adjusts both parties' reputation (+2 winner /
+  −1 loser), slashes losing-side juror stakes and redistributes to the
+  winning side (`slash_bps`), and pays every voting juror an arbitration fee
   (`arbitration_fee_bps`, off the top, split evenly regardless of side).
 - If jurors don't finish voting in time, both parties can jointly
   `extend_dispute_deadline`, or — once `voting_deadline` passes — anyone
