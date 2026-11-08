@@ -53,6 +53,24 @@ const MAX_SLASH_BPS: u32 = 5000; // 50%
 const MAX_ARBITRATION_FEE_BPS: u32 = 1000; // 10%
 /// Per-call cap on extend_milestone_deadline: 1 year.
 const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
+/// How many times a single milestone's deadline may be extended. Without a
+/// count cap, a renter could dribble out 1-second extensions forever and
+/// dodge the cumulative-seconds cap's intent.
+const MAX_DEADLINE_EXTENSIONS: u32 = 4;
+/// Cumulative cap across all extensions of one milestone: 2 years. Bounds
+/// how far a deadline can drift from what the host originally agreed to.
+const MAX_TOTAL_DEADLINE_EXTENSION_SECONDS: u64 = 2 * 365 * 24 * 60 * 60;
+/// Upper bound on how many milestones one `check_auto_release_range` call
+/// will scan. Keeps a keeper call from running out of gas on a 50-milestone
+/// escrow while still covering the whole list in a few calls.
+const MAX_AUTO_RELEASE_BATCH: u32 = 20;
+/// Upper bound on `get_escrows_for_party_page` page size - same
+/// storage/gas rationale as MAX_MILESTONES, applied to lookup pagination.
+const MAX_LOOKUP_PAGE: u32 = 50;
+/// How far ahead of `auto_release_at` a `check_milestone_reminder` call
+/// becomes valid (3 days). Gives keepers/UIs a due-soon signal without
+/// spamming from escrow creation onward.
+const REMINDER_LEAD_SECONDS: u64 = 3 * 24 * 60 * 60;
 /// Upper bound on milestone descriptions and dispute evidence URIs. These
 /// land in persistent storage, so an unbounded string is an unbounded and
 /// permanent storage-cost griefing vector, not just a UX nuisance.
