@@ -1458,6 +1458,96 @@ fn party_escrow_index_tracks_both_renter_and_host() {
 }
 
 #[test]
+fn party_escrow_page_returns_windows_and_empty_past_the_end() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+
+    let e0 = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    let e1 = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    let e2 = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    // full window then clamped tail window
+    let page = client.get_escrows_for_party_page(&renter, &0, &2);
+    assert_eq!(page.len(), 2);
+    assert_eq!(page.get(0).unwrap(), e0);
+    assert_eq!(page.get(1).unwrap(), e1);
+
+    let tail = client.get_escrows_for_party_page(&renter, &2, &10);
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail.get(0).unwrap(), e2);
+
+    // start past the end returns empty instead of panicking
+    assert!(client.get_escrows_for_party_page(&renter, &99, &5).is_empty());
+    // unknown parties page empty too
+    assert!(client
+        .get_escrows_for_party_page(&Address::generate(&env), &0, &5)
+        .is_empty());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn party_escrow_page_rejects_zero_page_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    client.get_escrows_for_party_page(&renter, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn party_escrow_page_rejects_oversized_page_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    // MAX_LOOKUP_PAGE is 50, so 51 must be rejected
+    client.get_escrows_for_party_page(&renter, &0, &51);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #28)")] // HostAcceptancePending
 fn deposit_blocked_until_host_accepts_when_gated() {
     let env = Env::default();
