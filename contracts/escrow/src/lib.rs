@@ -420,6 +420,41 @@ impl EscrowContract {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Paginated variant of `get_escrows_for_party` for parties with long
+    /// histories - unbounded reads get expensive in storage/gas, so callers
+    /// page through `start_index..start_index + max_count` instead.
+    /// `start_index` past the end returns an empty vec rather than
+    /// panicking; `max_count` is bounded by `MAX_LOOKUP_PAGE`, reusing
+    /// `InvalidPageSize` like `check_auto_release_range` does.
+    pub fn get_escrows_for_party_page(
+        env: Env,
+        party: Address,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_LOOKUP_PAGE {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let ids: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PartyEscrows(party))
+            .unwrap_or(Vec::new(&env));
+        let mut page: Vec<u32> = Vec::new(&env);
+        let len = ids.len();
+        if start_index >= len {
+            return page;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        for i in start_index..end {
+            page.push_back(ids.get(i).unwrap());
+        }
+        page
+    }
+
     /// When `create_escrow` was called with `requires_host_acceptance =
     /// true`, the host must call this before the renter can `deposit` -
     /// otherwise a renter could lock a host into rental terms they never
