@@ -1104,6 +1104,135 @@ fn confirm_all_milestones_skips_already_released_ones() {
 }
 
 #[test]
+fn auto_release_range_sweeps_due_milestones_and_skips_the_rest() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, 500u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // deposit time + 501: first two milestones due, third still pending -
+    // the batch releases exactly the due ones and returns their indices.
+    let t0 = env.ledger().timestamp();
+    env.ledger().set_timestamp(t0 + 501);
+    let released = client.check_auto_release_range(&escrow_id, &0, &20);
+    assert_eq!(released.len(), 2);
+    assert_eq!(released.get(0).unwrap(), 0);
+    assert_eq!(released.get(1).unwrap(), 1);
+    assert_eq!(token_client.balance(&host), 60_0000000i128);
+
+    let escrow = client.get_escrow(&escrow_id);
+    assert!(escrow.milestones.get(0).unwrap().released);
+    assert!(escrow.milestones.get(1).unwrap().released);
+    assert!(!escrow.milestones.get(2).unwrap().released);
+    assert_eq!(escrow.status, EscrowStatus::Active);
+}
+
+#[test]
+fn auto_release_range_respects_window_and_rejects_bad_page_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let token_client = token::Client::new(&env, &token_admin_client.address);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    // offsets 0 (due at deposit) then 999_999 (far future)
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 999_999u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // window [1..2) covers only the far-future milestone - nothing due
+    let released = client.check_auto_release_range(&escrow_id, &1, &1);
+    assert!(released.is_empty());
+    assert_eq!(token_client.balance(&host), 0);
+
+    // start past the end returns empty instead of panicking
+    let released = client.check_auto_release_range(&escrow_id, &99, &5);
+    assert!(released.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn auto_release_range_rejects_zero_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    client.check_auto_release_range(&escrow_id, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn auto_release_range_rejects_oversized_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    client.check_auto_release_range(&escrow_id, &0, &21);
+}
+
+#[test]
 fn renter_can_extend_a_milestone_deadline() {
     let env = Env::default();
     env.mock_all_auths();

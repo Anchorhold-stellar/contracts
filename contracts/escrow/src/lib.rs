@@ -776,6 +776,53 @@ impl EscrowContract {
         Self::release_milestone_internal(&env, &mut escrow, milestone_index);
     }
 
+    /// Keeper-friendly batch variant: scans up to `max_count` milestones
+    /// starting at `start_index` and releases every one that is due,
+    /// returning the indices it released. Unlike `check_auto_release` -
+    /// which panics on the first not-due milestone so a caller knows
+    /// exactly why one release refused - this silently skips released,
+    /// not-yet-due, and dispute-frozen milestones so one keeper call can
+    /// sweep a whole escrow without aborting halfway. `start_index` past
+    /// the end returns an empty vec; `max_count` is bounded by
+    /// `MAX_AUTO_RELEASE_BATCH` so a 50-milestone escrow can't run a
+    /// keeper call out of gas.
+    pub fn check_auto_release_range(
+        env: Env,
+        escrow_id: u32,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_AUTO_RELEASE_BATCH {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        let mut released: Vec<u32> = Vec::new(&env);
+        let len = escrow.milestones.len();
+        if start_index >= len {
+            return released;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        let now = env.ledger().timestamp();
+        for i in start_index..end {
+            let m = escrow.milestones.get(i).unwrap();
+            if m.released {
+                continue;
+            }
+            if escrow.status != EscrowStatus::Active {
+                continue;
+            }
+            if now < m.auto_release_at {
+                continue;
+            }
+            Self::release_milestone_internal(&env, &mut escrow, i);
+            released.push_back(i);
+        }
+        released
+    }
+
     /// Both parties agree to push a milestone's auto-release deadline out -
     /// requires both signatures in the same call, same pattern as
     /// `mutual_cancel` and `extend_dispute_deadline`. An extension moves
