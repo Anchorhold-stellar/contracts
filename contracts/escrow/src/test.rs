@@ -1422,6 +1422,139 @@ fn extend_milestone_deadline_rejects_wrong_host() {
 }
 
 #[test]
+fn milestone_reminder_fires_once_inside_the_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    assert_eq!(
+        client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at,
+        1_000_000 + ten_days
+    );
+
+    // 3-day lead window opens at auto_release_at - 3d; mid-window fires
+    env.ledger().set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    assert!(client.get_escrow(&escrow_id).milestones.get(0).unwrap().reminder_sent);
+
+    let reminded_count = env
+        .events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            soroban_sdk::Symbol::try_from_val(&env, &topics.get_unchecked(1))
+                == Ok(symbol_short!("reminded"))
+        })
+        .count();
+    assert_eq!(reminded_count, 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #40)")] // ReminderNotDue
+fn milestone_reminder_too_early_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // still at deposit time, a full week before the 3-day lead window opens
+    client.check_milestone_reminder(&escrow_id, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #39)")] // AlreadyReminded
+fn milestone_reminder_second_call_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    env.ledger().set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    // same tick, still in-window - but the flag is already set, so a
+    // keeper polling every block can't spam the event log
+    client.check_milestone_reminder(&escrow_id, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")] // AlreadyReleased
+fn milestone_reminder_on_released_milestone_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.confirm_milestone(&renter, &escrow_id, &0);
+
+    client.check_milestone_reminder(&escrow_id, &0);
+}
+
+#[test]
 fn party_escrow_index_tracks_both_renter_and_host() {
     let env = Env::default();
     env.mock_all_auths();
