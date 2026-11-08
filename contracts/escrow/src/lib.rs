@@ -776,25 +776,30 @@ impl EscrowContract {
         Self::release_milestone_internal(&env, &mut escrow, milestone_index);
     }
 
-    /// Renter grants the host extra time before a milestone's auto-release
-    /// deadline - a unilateral, host-favorable action (like an early
-    /// confirm, just in the other direction), so only the renter's
-    /// signature is required. Capped three ways: per-call
+    /// Both parties agree to push a milestone's auto-release deadline out -
+    /// requires both signatures in the same call, same pattern as
+    /// `mutual_cancel` and `extend_dispute_deadline`. An extension moves
+    /// money-timing for both sides (the renter waits longer to be able to
+    /// stop paying attention, the host waits longer to get paid), so a
+    /// unilateral renter-only extension would let one side move the other's
+    /// payout timing without consent. Capped three ways: per-call
     /// (`MAX_DEADLINE_EXTENSION_SECONDS`), cumulative
     /// (`MAX_TOTAL_DEADLINE_EXTENSION_SECONDS`), and count
-    /// (`MAX_DEADLINE_EXTENSIONS`) - so a renter can't dribble out
+    /// (`MAX_DEADLINE_EXTENSIONS`) - so the parties can't dribble out
     /// 1-second extensions forever or push one deadline years past what
-    /// the host originally agreed to.
+    /// was originally agreed.
     pub fn extend_milestone_deadline(
         env: Env,
         renter: Address,
+        host: Address,
         escrow_id: u32,
         milestone_index: u32,
         additional_seconds: u64,
     ) {
         renter.require_auth();
+        host.require_auth();
         let mut escrow = Self::load_escrow(&env, escrow_id);
-        if escrow.renter != renter {
+        if escrow.renter != renter || escrow.host != host {
             panic_with_error!(&env, Error::NotAuthorized);
         }
         if escrow.status != EscrowStatus::Active {

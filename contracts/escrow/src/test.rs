@@ -1126,7 +1126,7 @@ fn renter_can_extend_a_milestone_deadline() {
     client.deposit(&renter, &escrow_id);
 
     let before = client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at;
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &500);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &500);
     let after = client.get_escrow(&escrow_id).milestones.get(0).unwrap().auto_release_at;
     assert_eq!(after, before + 500);
 
@@ -1158,7 +1158,7 @@ fn extend_milestone_deadline_rejects_excessive_extension() {
     let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &(366 * 24 * 60 * 60));
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &(366 * 24 * 60 * 60));
 }
 
 #[test]
@@ -1183,8 +1183,8 @@ fn extend_milestone_deadline_tracks_count_and_total() {
     let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
     client.deposit(&renter, &escrow_id);
 
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &500);
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &300);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &500);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &300);
     let m = client.get_escrow(&escrow_id).milestones.get(0).unwrap();
     assert_eq!(m.extension_count, 2);
     assert_eq!(m.total_extension_seconds, 800);
@@ -1226,10 +1226,10 @@ fn extend_milestone_deadline_rejects_cumulative_overflow() {
     client.deposit(&renter, &escrow_id);
 
     let year = 365 * 24 * 60 * 60;
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &year);
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &year);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &year);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &year);
     // total is now exactly at the 2-year cumulative cap; 1 more second overflows it
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &1);
 }
 
 #[test]
@@ -1256,10 +1256,40 @@ fn extend_milestone_deadline_rejects_fifth_extension() {
     client.deposit(&renter, &escrow_id);
 
     for _ in 0..4 {
-        client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+        client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &1);
     }
     // fifth extension hits the count cap even though the cumulative total is tiny
-    client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn extend_milestone_deadline_rejects_wrong_host() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // renter is right but the "host" isn't this escrow's host - one side
+    // moving the other's payout timing without consent is exactly what the
+    // co-sign requirement exists to stop.
+    client.extend_milestone_deadline(&renter, &stranger, &escrow_id, &0, &500);
 }
 
 #[test]
