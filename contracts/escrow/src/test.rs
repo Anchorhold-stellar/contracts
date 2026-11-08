@@ -1555,6 +1555,75 @@ fn milestone_reminder_on_released_milestone_fails() {
 }
 
 #[test]
+fn milestone_deadline_query_reflects_extensions_and_reminder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // pre-extension: plain deadline, zero extensions, no reminder
+    let (due, count, total, reminded) = client.get_milestone_deadline(&escrow_id, &0);
+    assert_eq!(due, 1_000_000 + ten_days);
+    assert_eq!(count, 0);
+    assert_eq!(total, 0);
+    assert!(!reminded);
+
+    // extension moves the deadline and shows up in the query
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &500);
+    let (due_after, count_after, total_after, _) = client.get_milestone_deadline(&escrow_id, &0);
+    assert_eq!(due_after, 1_000_000 + ten_days + 500);
+    assert_eq!(count_after, 1);
+    assert_eq!(total_after, 500);
+
+    // reminder flips the flag the query reports
+    env.ledger().set_timestamp(1_000_000 + ten_days + 500 - 24 * 60 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    let (_, _, _, reminded_after) = client.get_milestone_deadline(&escrow_id, &0);
+    assert!(reminded_after);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")] // InvalidMilestone
+fn milestone_deadline_query_rejects_out_of_range_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 60_0000000i128, 0u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+
+    client.get_milestone_deadline(&escrow_id, &99);
+}
+
+#[test]
 fn party_escrow_index_tracks_both_renter_and_host() {
     let env = Env::default();
     env.mock_all_auths();
