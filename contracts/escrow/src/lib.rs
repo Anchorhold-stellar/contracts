@@ -779,8 +779,12 @@ impl EscrowContract {
     /// Renter grants the host extra time before a milestone's auto-release
     /// deadline - a unilateral, host-favorable action (like an early
     /// confirm, just in the other direction), so only the renter's
-    /// signature is required. Capped per-call to keep a fat-fingered value
-    /// from parking a milestone in limbo for centuries.
+    /// signature is required. Capped three ways: per-call
+    /// (`MAX_DEADLINE_EXTENSION_SECONDS`), cumulative
+    /// (`MAX_TOTAL_DEADLINE_EXTENSION_SECONDS`), and count
+    /// (`MAX_DEADLINE_EXTENSIONS`) - so a renter can't dribble out
+    /// 1-second extensions forever or push one deadline years past what
+    /// the host originally agreed to.
     pub fn extend_milestone_deadline(
         env: Env,
         renter: Address,
@@ -807,14 +811,32 @@ impl EscrowContract {
         if m.released {
             panic_with_error!(&env, Error::AlreadyReleased);
         }
-        m.auto_release_at = m
+        if m.extension_count >= MAX_DEADLINE_EXTENSIONS {
+            panic_with_error!(&env, Error::TooManyExtensions);
+        }
+        let new_total = m
+            .total_extension_seconds
+            .checked_add(additional_seconds)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        if new_total > MAX_TOTAL_DEADLINE_EXTENSION_SECONDS {
+            panic_with_error!(&env, Error::ExtensionLimitReached);
+        }
+        let new_release_at = m
             .auto_release_at
             .checked_add(additional_seconds)
             .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        m.auto_release_at = new_release_at;
+        m.extension_count += 1;
+        m.total_extension_seconds = new_total;
         escrow.milestones.set(milestone_index, m);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("extended")),
+            (escrow_id, milestone_index, new_release_at, new_total),
+        );
     }
 
     /// Either party can open a dispute on a specific milestone before it

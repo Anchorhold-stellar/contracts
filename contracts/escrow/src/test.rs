@@ -1162,6 +1162,107 @@ fn extend_milestone_deadline_rejects_excessive_extension() {
 }
 
 #[test]
+fn extend_milestone_deadline_tracks_count_and_total() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &500);
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &300);
+    let m = client.get_escrow(&escrow_id).milestones.get(0).unwrap();
+    assert_eq!(m.extension_count, 2);
+    assert_eq!(m.total_extension_seconds, 800);
+
+    // one `extended` event per successful extension
+    let extended_count = env
+        .events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            soroban_sdk::Symbol::try_from_val(&env, &topics.get_unchecked(1))
+                == Ok(symbol_short!("extended"))
+        })
+        .count();
+    assert_eq!(extended_count, 2);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #36)")] // ExtensionLimitReached
+fn extend_milestone_deadline_rejects_cumulative_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    let year = 365 * 24 * 60 * 60;
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &year);
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &year);
+    // total is now exactly at the 2-year cumulative cap; 1 more second overflows it
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #37)")] // TooManyExtensions
+fn extend_milestone_deadline_rejects_fifth_extension() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    for _ in 0..4 {
+        client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+    }
+    // fifth extension hits the count cap even though the cumulative total is tiny
+    client.extend_milestone_deadline(&renter, &escrow_id, &0, &1);
+}
+
+#[test]
 fn party_escrow_index_tracks_both_renter_and_host() {
     let env = Env::default();
     env.mock_all_auths();
