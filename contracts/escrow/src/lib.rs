@@ -1450,6 +1450,29 @@ impl EscrowContract {
             .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone))
     }
 
+    /// Deadline-focused view of a milestone for keepers/UIs polling
+    /// upcoming releases - (auto_release_at, extension_count,
+    /// total_extension_seconds, reminder_sent). Cheaper for callers than
+    /// `get_milestone` when only the timing state matters; still
+    /// deserializes the whole Escrow under the hood, like
+    /// `get_escrow_status`.
+    pub fn get_milestone_deadline(
+        env: Env,
+        escrow_id: u32,
+        milestone_index: u32,
+    ) -> (u64, u32, u64, bool) {
+        let m = Self::load_escrow(&env, escrow_id)
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+        (
+            m.auto_release_at,
+            m.extension_count,
+            m.total_extension_seconds,
+            m.reminder_sent,
+        )
+    }
+
     pub fn get_dispute(env: Env, escrow_id: u32, milestone_index: u32) -> Option<Dispute> {
         env.storage()
             .persistent()
