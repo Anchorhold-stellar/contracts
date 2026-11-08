@@ -858,6 +858,49 @@ impl EscrowContract {
         released
     }
 
+    /// Keeper-pollable due-soon signal for a milestone whose auto-release
+    /// deadline is approaching. Fires at most once per milestone - the first
+    /// call inside the `[auto_release_at - REMINDER_LEAD_SECONDS,
+    /// auto_release_at)` window sets `reminder_sent` and emits an
+    /// `(escrow, reminded)` event; later calls fail with `AlreadyReminded`
+    /// so a keeper polling every tick can't spam the event log. Calls
+    /// outside the window fail with `ReminderNotDue`, and - like
+    /// `check_auto_release` - this refuses to fire while the escrow is
+    /// `Disputed`, since a frozen milestone has no impending release to
+    /// warn about.
+    pub fn check_milestone_reminder(env: Env, escrow_id: u32, milestone_index: u32) {
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.status == EscrowStatus::Disputed {
+            panic_with_error!(&env, Error::EscrowDisputed);
+        }
+        let mut m = escrow
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+        if m.released {
+            panic_with_error!(&env, Error::AlreadyReleased);
+        }
+        if m.reminder_sent {
+            panic_with_error!(&env, Error::AlreadyReminded);
+        }
+        let now = env.ledger().timestamp();
+        let window_start = m.auto_release_at.saturating_sub(REMINDER_LEAD_SECONDS);
+        if now < window_start || now >= m.auto_release_at {
+            panic_with_error!(&env, Error::ReminderNotDue);
+        }
+        m.reminder_sent = true;
+        let due_at = m.auto_release_at;
+        escrow.milestones.set(milestone_index, m);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("reminded")),
+            (escrow_id, milestone_index, due_at),
+        );
+    }
+
     /// Both parties agree to push a milestone's auto-release deadline out -
     /// requires both signatures in the same call, same pattern as
     /// `mutual_cancel` and `extend_dispute_deadline`. An extension moves
