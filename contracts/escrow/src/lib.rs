@@ -359,6 +359,9 @@ impl EscrowContract {
                 released: false,
                 released_at: 0,
                 auto_release_at: 0, // set on deposit
+                extension_count: 0,
+                total_extension_seconds: 0,
+                reminder_sent: false,
             });
         }
 
@@ -477,6 +480,9 @@ impl EscrowContract {
             released: false,
             released_at: 0,
             auto_release_at: 0,
+            extension_count: 0,
+            total_extension_seconds: 0,
+            reminder_sent: false,
         });
         escrow.total_amount += amount;
         Self::revoke_stale_acceptance(&mut escrow);
@@ -568,6 +574,9 @@ impl EscrowContract {
                 released: false,
                 released_at: 0,
                 auto_release_at: 0,
+                extension_count: 0,
+                total_extension_seconds: 0,
+                reminder_sent: false,
             },
         );
         Self::revoke_stale_acceptance(&mut escrow);
