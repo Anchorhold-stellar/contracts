@@ -44,4 +44,5 @@ pub enum Error {
     InvalidPageSize = 38,
     AlreadyReminded = 39,
     ReminderNotDue = 40,
+    InvalidReminderLead = 41,
 }
