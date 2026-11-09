@@ -164,6 +164,8 @@ Two independent, additive fees, both computed in basis points
 | `(escrow, disputed)` | `raise_dispute` | `(id, milestone_index, caller)` |
 | `(escrow, resolved)` | `resolve_dispute` | `(id, milestone_index, recipient)` |
 | `(escrow, stale)` | `force_resolve_stale_dispute` | `(id, milestone_index)` |
+| `(escrow, extended)` | `extend_milestone_deadline` | `(id, milestone_index, new_release_at, new_total)` |
+| `(escrow, reminded)` | `check_milestone_reminder` | `(id, milestone_index, due_at)` |
 | `(juror, joined)` | `register_juror` | `(juror, stake)` |
 | `(juror, left)` | `withdraw_juror_stake` | `(juror, amount)` |
 
@@ -178,12 +180,13 @@ Two independent, additive fees, both computed in basis points
 `set_juror_params`, `get_juror_params`, `set_paused`, `is_paused`
 
 **Escrow lifecycle:** `create_escrow`, `get_escrows_for_party`,
-`accept_escrow`, `reject_escrow`, `add_milestone`, `remove_milestone`,
-`update_milestone`, `deposit`, `cancel_escrow`, `expire_unfunded_escrow`,
-`mutual_cancel`
+`get_escrows_for_party_page`, `accept_escrow`, `reject_escrow`,
+`add_milestone`, `remove_milestone`, `update_milestone`, `deposit`,
+`cancel_escrow`, `expire_unfunded_escrow`, `mutual_cancel`
 
 **Milestone release:** `confirm_milestone`, `confirm_all_milestones`,
-`check_auto_release`, `extend_milestone_deadline`
+`check_auto_release`, `check_auto_release_range`,
+`extend_milestone_deadline`, `check_milestone_reminder`
 
 **Disputes:** `raise_dispute`, `add_dispute_evidence`,
 `extend_dispute_deadline`, `vote_dispute`, `resolve_dispute`,
@@ -193,7 +196,8 @@ Two independent, additive fees, both computed in basis points
 `get_active_dispute_count`
 
 **Read-only queries:** `get_escrow`, `get_escrow_status`, `get_milestone`,
-`get_dispute`, `get_reputation`, `get_escrow_count`
+`get_milestone_deadline`, `get_dispute`, `get_reputation`,
+`get_escrow_count`
 
 Full parameter lists and per-function rationale are documented as doc
 comments on each function in `src/lib.rs`.
