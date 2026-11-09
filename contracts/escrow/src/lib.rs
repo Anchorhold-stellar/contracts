@@ -958,6 +958,10 @@ impl EscrowContract {
         m.auto_release_at = new_release_at;
         m.extension_count += 1;
         m.total_extension_seconds = new_total;
+        // The due-soon window moved with the deadline, so a reminder fired
+        // for the old date no longer covers the new one — re-arm it so the
+        // keeper can warn again ahead of the pushed deadline.
+        m.reminder_sent = false;
         escrow.milestones.set(milestone_index, m);
         env.storage()
             .persistent()

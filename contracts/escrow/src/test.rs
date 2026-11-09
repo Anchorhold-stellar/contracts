@@ -1555,6 +1555,47 @@ fn milestone_reminder_on_released_milestone_fails() {
 }
 
 #[test]
+fn extending_a_deadline_re_arms_the_reminder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // fire the reminder for the original deadline
+    env.ledger().set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    assert!(client.get_escrow(&escrow_id).milestones.get(0).unwrap().reminder_sent);
+
+    // pushing the deadline re-arms it - the old warning no longer covers
+    // the new due-soon window
+    client.extend_milestone_deadline(&renter, &host, &escrow_id, &0, &ten_days);
+    let m = client.get_escrow(&escrow_id).milestones.get(0).unwrap();
+    assert!(!m.reminder_sent);
+
+    // keeper can warn again ahead of the pushed deadline
+    env.ledger().set_timestamp(1_000_000 + ten_days + ten_days - 24 * 60 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    assert!(client.get_escrow(&escrow_id).milestones.get(0).unwrap().reminder_sent);
+}
+
+#[test]
 fn milestone_deadline_query_reflects_extensions_and_reminder() {
     let env = Env::default();
     env.mock_all_auths();
