@@ -1665,6 +1665,89 @@ fn milestone_deadline_query_rejects_out_of_range_index() {
 }
 
 #[test]
+fn reminder_lead_is_configurable_and_moves_the_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    assert_eq!(client.get_reminder_lead(), 3 * 24 * 60 * 60);
+
+    let one_hour = 60 * 60;
+    client.set_reminder_lead(&admin, &one_hour);
+    assert_eq!(client.get_reminder_lead(), one_hour);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    // 1 day before the deadline: inside the old 3-day window, but outside
+    // the newly configured 1-hour one - the reminder refuses to fire early
+    env.ledger().set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    assert!(client.try_check_milestone_reminder(&escrow_id, &0).is_err());
+
+    // 30 minutes before the deadline: inside the new 1-hour window - fires
+    env.ledger().set_timestamp(1_000_000 + ten_days - 30 * 60);
+    client.check_milestone_reminder(&escrow_id, &0);
+    assert!(client.get_escrow(&escrow_id).milestones.get(0).unwrap().reminder_sent);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #41)")] // InvalidReminderLead
+fn reminder_lead_rejects_out_of_bounds_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_reminder_lead(&admin, &30); // well under the 1-hour floor
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #41)")] // InvalidReminderLead
+fn reminder_lead_rejects_values_above_the_ceiling() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_reminder_lead(&admin, &(31 * 24 * 60 * 60)); // over the 30-day ceiling
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")] // NotAuthorized
+fn reminder_lead_requires_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    client.set_reminder_lead(&stranger, &(24 * 60 * 60));
+}
+
+#[test]
 fn party_escrow_index_tracks_both_renter_and_host() {
     let env = Env::default();
     env.mock_all_auths();
