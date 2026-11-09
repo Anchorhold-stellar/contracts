@@ -188,7 +188,8 @@ Two independent, additive fees, both computed in basis points
 
 **Milestone release:** `confirm_milestone`, `confirm_all_milestones`,
 `check_auto_release`, `check_auto_release_range`,
-`extend_milestone_deadline`, `check_milestone_reminder`
+`extend_milestone_deadline`, `check_milestone_reminder`,
+`check_milestone_reminder_range`
 
 **Disputes:** `raise_dispute`, `add_dispute_evidence`,
 `extend_dispute_deadline`, `vote_dispute`, `resolve_dispute`,
