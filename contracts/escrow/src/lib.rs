@@ -906,9 +906,7 @@ impl EscrowContract {
             panic_with_error!(&env, Error::AlreadyReminded);
         }
         let now = env.ledger().timestamp();
-        let window_start = m
-            .auto_release_at
-            .saturating_sub(DEFAULT_REMINDER_LEAD_SECONDS);
+        let window_start = m.auto_release_at.saturating_sub(Self::reminder_lead(&env));
         if now < window_start || now >= m.auto_release_at {
             panic_with_error!(&env, Error::ReminderNotDue);
         }
