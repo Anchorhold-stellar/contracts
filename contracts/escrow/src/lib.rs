@@ -923,6 +923,70 @@ impl EscrowContract {
         );
     }
 
+    /// Keeper-friendly batch variant: scans up to `max_count` milestones
+    /// starting at `start_index` and fires the due-soon reminder for every
+    /// one inside its window, returning the indices it fired for. Unlike
+    /// `check_milestone_reminder` - which panics on the first milestone that
+    /// isn't due so a caller knows exactly why one reminder refused - this
+    /// silently skips released, already-reminded, not-yet-due, and
+    /// dispute-frozen milestones so one keeper call can sweep a whole escrow
+    /// without aborting halfway. `start_index` past the end returns an empty
+    /// vec; `max_count` is bounded by `MAX_AUTO_RELEASE_BATCH` - the same
+    /// keeper-sweep gas cap `check_auto_release_range` uses.
+    pub fn check_milestone_reminder_range(
+        env: Env,
+        escrow_id: u32,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_AUTO_RELEASE_BATCH {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        let mut fired: Vec<u32> = Vec::new(&env);
+        let len = escrow.milestones.len();
+        if start_index >= len {
+            return fired;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        let now = env.ledger().timestamp();
+        let lead = Self::reminder_lead(&env);
+        // Hoisted out of the loop: unlike the release sweep - where each
+        // release can flip the escrow to Completed mid-scan - firing
+        // reminders never changes status, so one check covers the whole run.
+        let disputed = escrow.status == EscrowStatus::Disputed;
+        for i in start_index..end {
+            if disputed {
+                continue;
+            }
+            let mut m = escrow.milestones.get(i).unwrap();
+            if m.released || m.reminder_sent {
+                continue;
+            }
+            let window_start = m.auto_release_at.saturating_sub(lead);
+            if now < window_start || now >= m.auto_release_at {
+                continue;
+            }
+            m.reminder_sent = true;
+            let due_at = m.auto_release_at;
+            escrow.milestones.set(i, m);
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("reminded")),
+                (escrow_id, i, due_at),
+            );
+            fired.push_back(i);
+        }
+        if !fired.is_empty() {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Escrow(escrow_id), &escrow);
+        }
+        fired
+    }
+
     /// Both parties agree to push a milestone's auto-release deadline out -
     /// requires both signatures in the same call, same pattern as
     /// `mutual_cancel` and `extend_dispute_deadline`. An extension moves
