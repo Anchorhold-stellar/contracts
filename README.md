@@ -1,97 +1,50 @@
-# SafeTrust v2 — Milestone Escrow on Soroban
+# SafeTrust v2 — Soroban Escrow Contracts
 
-A self-custodied, milestone-capable rental escrow platform for Stellar/Soroban.
-Built as a feature expansion on the SafeTrust concept (decentralized P2P escrow
-for rentals) — the core difference here is that escrow logic lives in a
-**contract you own**, not a third-party hosted API, and supports multi-release
-milestones plus on-chain dispute resolution instead of a single release/refund.
+Self-custodied, milestone-capable rental escrow contracts for Stellar/Soroban.
+Escrow logic lives in a contract you own: multi-release milestones, per-milestone
+auto-release timeouts, and on-chain staked-juror dispute resolution. No third party
+ever custodies funds or has unilateral power to move them.
 
-## Monorepo layout
+This repo holds the contracts only.
+
+## Layout
 
 ```
 safetrust-v2/
-├── contracts/escrow/     Soroban smart contract (Rust)
-├── backend/              Express API + event indexer + Postgres schema
-├── frontend/             Next.js 14 app (renter / host / juror views)
-└── docker-compose.yml    Local Postgres + Hasura
+└── contracts/escrow/     Soroban smart contract (Rust)
 ```
 
-## How the pieces connect
-
-```
-Soroban contract (contracts/escrow)
-        │  emits events (deposit, milestone_release, dispute_opened, dispute_resolved)
-        ▼
-backend/src/indexer  ── polls/subscribes to contract events, writes to Postgres
-        │
-        ▼
-Postgres  ── exposed via Hasura GraphQL (docker-compose.yml)
-        │
-        ▼
-backend/src/routes  ── REST endpoints for actions the frontend can't sign itself
-        │                (building unsigned XDR, submitting evidence, juror registration)
-        ▼
-frontend (Next.js)  ── renter/host/juror dashboards, Freighter wallet signing
-```
+Full design docs, function reference, events, and error codes:
+[`contracts/escrow/README.md`](contracts/escrow/README.md).
 
 ## Getting started
 
-### 1. Contract
+Requires Rust with the `wasm32-unknown-unknown` target and the Soroban CLI:
 
-```
-cd contracts/escrow
-cargo build --target wasm32-unknown-unknown --release
-```
-
-Requires the Soroban CLI and Rust wasm32 target:
 ```
 rustup target add wasm32-unknown-unknown
 cargo install --locked soroban-cli
 ```
 
+Run the test suite (unit tests exercise every function against an in-memory
+ledger, including full dispute/slashing/timelock flows):
+
+```
+cd contracts/escrow
+cargo test
+```
+
+Build the deployable contract:
+
+```
+cargo build --target wasm32-unknown-unknown --release
+```
+
 Deploy to testnet:
+
 ```
 soroban contract deploy \
   --wasm target/wasm32-unknown-unknown/release/escrow.wasm \
   --source <your-identity> \
   --network testnet
 ```
-
-### 2. Backend
-
-```
-cd backend
-cp .env.example .env   # fill in RPC URL, contract ID, DB creds
-npm install
-npm run dev
-```
-
-### 3. Database + Hasura
-
-```
-docker compose up -d
-```
-
-### 4. Frontend
-
-```
-cd frontend
-npm install
-npm run dev
-```
-
-## What's implemented vs. stubbed
-
-This scaffold gives you real structure and working logic for the pieces that
-define the project (contract state machine, indexer shape, API surface,
-frontend flow) but a few integration points are intentionally left as `TODO`
-for you to fill in with your own RPC endpoint, Freighter integration details,
-and Hasura metadata — those are config/wiring, not design decisions, so
-finishing them shouldn't require changing the architecture.
-
-- [x] Escrow contract: init, deposit, milestone release, auto-release timeout, dispute lifecycle, juror voting, pre/post-funding cancellation, admin-configurable protocol fee/juror params/slash rate, juror stake withdrawal + reputation gating, stale-dispute fallback resolution, juror slashing/reward, milestone editing pre-funding, optional host-acceptance step, party-indexed escrow lookup, admin pause + key rotation, unfunded-escrow expiry, per-milestone dispute history, input-size caps, and contract events (including a dedicated completion event) for the indexer to consume
-- [x] Backend: REST routes for escrow + dispute actions, Postgres schema, indexer skeleton
-- [x] Frontend: dashboard, escrow detail with milestone timeline, dispute filing UI, wallet connect stub
-- [ ] TODO: wire indexer to a real Soroban RPC event stream (currently polls a stubbed function)
-- [ ] TODO: Freighter signing calls (stubbed — see `frontend/components/WalletConnect.tsx`)
-- [ ] TODO: Hasura metadata/permissions (schema.sql gives you tables; track them in Hasura console or via metadata YAML)
