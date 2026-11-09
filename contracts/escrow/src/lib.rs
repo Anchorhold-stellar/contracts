@@ -67,10 +67,13 @@ const MAX_AUTO_RELEASE_BATCH: u32 = 20;
 /// Upper bound on `get_escrows_for_party_page` page size - same
 /// storage/gas rationale as MAX_MILESTONES, applied to lookup pagination.
 const MAX_LOOKUP_PAGE: u32 = 50;
-/// How far ahead of `auto_release_at` a `check_milestone_reminder` call
-/// becomes valid (3 days). Gives keepers/UIs a due-soon signal without
-/// spamming from escrow creation onward.
-const REMINDER_LEAD_SECONDS: u64 = 3 * 24 * 60 * 60;
+/// Default (admin-configurable, see set_reminder_lead) length of time
+/// before `auto_release_at` that a `check_milestone_reminder` call becomes
+/// valid (3 days). Gives keepers/UIs a due-soon signal without spamming
+/// from escrow creation onward.
+const DEFAULT_REMINDER_LEAD_SECONDS: u64 = 3 * 24 * 60 * 60;
+const MIN_REMINDER_LEAD_SECONDS: u64 = 60 * 60; // 1 hour
+const MAX_REMINDER_LEAD_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 /// Upper bound on milestone descriptions and dispute evidence URIs. These
 /// land in persistent storage, so an unbounded string is an unbounded and
 /// permanent storage-cost griefing vector, not just a UX nuisance.
@@ -115,6 +118,7 @@ pub enum DataKey {
     FeeExempt(Address),
     StakeWeightedVoting,
     UnfundedExpiryWindow,
+    ReminderLead,
 }
 
 #[contract]
@@ -212,6 +216,24 @@ impl EscrowContract {
 
     pub fn get_unfunded_expiry_window(env: Env) -> u64 {
         Self::unfunded_expiry_window(&env)
+    }
+
+    /// How far ahead of `auto_release_at` a `check_milestone_reminder` call
+    /// becomes valid. Bounded to [MIN_REMINDER_LEAD_SECONDS,
+    /// MAX_REMINDER_LEAD_SECONDS] so it can't be set to something that
+    /// either fires from escrow creation onward or never fires at all.
+    pub fn set_reminder_lead(env: Env, admin: Address, seconds: u64) {
+        Self::require_admin(&env, &admin);
+        if !(MIN_REMINDER_LEAD_SECONDS..=MAX_REMINDER_LEAD_SECONDS).contains(&seconds) {
+            panic_with_error!(&env, Error::InvalidReminderLead);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ReminderLead, &seconds);
+    }
+
+    pub fn get_reminder_lead(env: Env) -> u64 {
+        Self::reminder_lead(&env)
     }
 
     /// Set (or update) the protocol fee taken out of every milestone payout.
@@ -860,7 +882,7 @@ impl EscrowContract {
 
     /// Keeper-pollable due-soon signal for a milestone whose auto-release
     /// deadline is approaching. Fires at most once per milestone - the first
-    /// call inside the `[auto_release_at - REMINDER_LEAD_SECONDS,
+    /// call inside the `[auto_release_at - reminder lead,
     /// auto_release_at)` window sets `reminder_sent` and emits an
     /// `(escrow, reminded)` event; later calls fail with `AlreadyReminded`
     /// so a keeper polling every tick can't spam the event log. Calls
@@ -884,7 +906,9 @@ impl EscrowContract {
             panic_with_error!(&env, Error::AlreadyReminded);
         }
         let now = env.ledger().timestamp();
-        let window_start = m.auto_release_at.saturating_sub(REMINDER_LEAD_SECONDS);
+        let window_start = m
+            .auto_release_at
+            .saturating_sub(DEFAULT_REMINDER_LEAD_SECONDS);
         if now < window_start || now >= m.auto_release_at {
             panic_with_error!(&env, Error::ReminderNotDue);
         }
@@ -1795,6 +1819,13 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::UnfundedExpiryWindow)
             .unwrap_or(DEFAULT_UNFUNDED_EXPIRY_WINDOW)
+    }
+
+    fn reminder_lead(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReminderLead)
+            .unwrap_or(DEFAULT_REMINDER_LEAD_SECONDS)
     }
 
     fn juror_params(env: &Env) -> JurorParams {
