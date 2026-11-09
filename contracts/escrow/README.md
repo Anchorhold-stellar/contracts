@@ -133,6 +133,7 @@ can't permanently brick it) can:
 | Stake-weighted voting | `set_stake_weighted_voting(bool)` |
 | Dispute voting window | `set_dispute_voting_window(seconds)` — bounded [1h, 30d] |
 | Unfunded-escrow expiry window | `set_unfunded_expiry_window(seconds)` — bounded [1d, 1y] |
+| Reminder lead window | `set_reminder_lead(seconds)` — bounded [1h, 30d] |
 | Emergency pause | `set_paused(bool)` — blocks only new `create_escrow`/`deposit`, never touches escrows already active |
 
 None of these let the admin touch a specific escrow's funds, pick a
@@ -175,6 +176,7 @@ Two independent, additive fees, both computed in basis points
 `accept_admin_transfer`, `get_admin`, `get_pending_admin`,
 `set_dispute_voting_window`, `get_dispute_voting_window`,
 `set_unfunded_expiry_window`, `get_unfunded_expiry_window`,
+`set_reminder_lead`, `get_reminder_lead`,
 `set_fee_config`, `get_fee_config`, `set_fee_exempt`, `is_fee_exempt`,
 `set_stake_weighted_voting`, `get_stake_weighted_voting`,
 `set_juror_params`, `get_juror_params`, `set_paused`, `is_paused`
@@ -245,7 +247,8 @@ comments on each function in `src/lib.rs`.
 | 37 | `TooManyExtensions` | Milestone already extended `MAX_DEADLINE_EXTENSIONS` times |
 | 38 | `InvalidPageSize` | Keeper/lookup page size is zero or above its batch cap |
 | 39 | `AlreadyReminded` | `check_milestone_reminder` already fired for this milestone |
-| 40 | `ReminderNotDue` | Milestone not inside its 3-day pre-deadline reminder window |
+| 40 | `ReminderNotDue` | Milestone not inside its reminder-lead pre-deadline window |
+| 41 | `InvalidReminderLead` | Reminder lead window outside `[1h, 30d]` |
 
 ## Building, testing, deploying
 
