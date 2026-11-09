@@ -1748,6 +1748,169 @@ fn reminder_lead_requires_admin() {
 }
 
 #[test]
+fn reminder_range_sweeps_due_soon_milestones_and_skips_the_rest() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    // offsets must be non-decreasing: m0 due at deposit, m1 due in
+    // 10 days, m2 due in 100 days - the default 3-day lead window
+    // catches only m1 when the clock is at day 9
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, 0u64));
+    milestones.push_back((String::from_str(&env, "midterm"), 30_0000000i128, ten_days));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, 100 * ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    env.ledger()
+        .set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    let fired = client.check_milestone_reminder_range(&escrow_id, &0, &20);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired.get(0).unwrap(), 1);
+
+    let escrow = client.get_escrow(&escrow_id);
+    assert!(!escrow.milestones.get(0).unwrap().reminder_sent);
+    assert!(escrow.milestones.get(1).unwrap().reminder_sent);
+    assert!(!escrow.milestones.get(2).unwrap().reminder_sent);
+
+    // a second sweep fires nothing new - m0 is flagged, m1/m2 are out of
+    // window - and persists no writes beyond the first
+    let refired = client.check_milestone_reminder_range(&escrow_id, &0, &20);
+    assert!(refired.is_empty());
+
+    let reminded_count = env
+        .events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            soroban_sdk::Symbol::try_from_val(&env, &topics.get_unchecked(1))
+                == Ok(symbol_short!("reminded"))
+        })
+        .count();
+    assert_eq!(reminded_count, 1);
+}
+
+#[test]
+fn reminder_range_skips_released_milestones_and_honors_start_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    env.ledger().set_timestamp(1_000_000);
+    let ten_days = 10 * 24 * 60 * 60;
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-in"), 30_0000000i128, ten_days));
+    milestones.push_back((String::from_str(&env, "move-out"), 40_0000000i128, ten_days));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+    client.confirm_milestone(&renter, &escrow_id, &0);
+
+    // window starting at m1 skips released m0 and fires only m1
+    env.ledger()
+        .set_timestamp(1_000_000 + ten_days - 24 * 60 * 60);
+    let fired = client.check_milestone_reminder_range(&escrow_id, &1, &1);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired.get(0).unwrap(), 1);
+
+    // start past the end returns empty instead of panicking
+    assert!(client
+        .check_milestone_reminder_range(&escrow_id, &99, &5)
+        .is_empty());
+
+    // a disputed escrow freezes every reminder, same as the single call
+    for j in [Address::generate(&env), Address::generate(&env), Address::generate(&env)] {
+        token_admin_client.mint(&j, &200_0000000);
+        client.register_juror(&j, &asset_address, &100_0000000);
+    }
+    client.raise_dispute(
+        &host,
+        &escrow_id,
+        &1,
+        &String::from_str(&env, "ipfs://evidence"),
+    );
+    assert!(client
+        .check_milestone_reminder_range(&escrow_id, &0, &20)
+        .is_empty());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn reminder_range_rejects_zero_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    client.check_milestone_reminder_range(&escrow_id, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #38)")] // InvalidPageSize
+fn reminder_range_rejects_oversized_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let renter = Address::generate(&env);
+    let host = Address::generate(&env);
+
+    let token_admin_client = create_token_contract(&env, &admin);
+    let asset_address = token_admin_client.address.clone();
+    token_admin_client.mint(&renter, &1_000_0000000);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back((String::from_str(&env, "move-out"), 50_0000000i128, 1000u64));
+    let escrow_id = client.create_escrow(&renter, &host, &asset_address, &milestones, &false);
+    client.deposit(&renter, &escrow_id);
+
+    client.check_milestone_reminder_range(&escrow_id, &0, &21);
+}
+
+#[test]
 fn party_escrow_index_tracks_both_renter_and_host() {
     let env = Env::default();
     env.mock_all_auths();
