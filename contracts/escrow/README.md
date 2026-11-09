@@ -241,6 +241,11 @@ comments on each function in `src/lib.rs`.
 | 33 | `ArbitrationFeeTooHigh` | Arbitration fee above `MAX_ARBITRATION_FEE_BPS` |
 | 34 | `TooMuchEvidence` | Additional evidence above `MAX_ADDITIONAL_EVIDENCE` entries |
 | 35 | `InvalidExpiryWindow` | Unfunded-escrow expiry window outside `[1d, 1y]` |
+| 36 | `ExtensionLimitReached` | Milestone extensions exceed the cumulative 2-year cap |
+| 37 | `TooManyExtensions` | Milestone already extended `MAX_DEADLINE_EXTENSIONS` times |
+| 38 | `InvalidPageSize` | Keeper/lookup page size is zero or above its batch cap |
+| 39 | `AlreadyReminded` | `check_milestone_reminder` already fired for this milestone |
+| 40 | `ReminderNotDue` | Milestone not inside its 3-day pre-deadline reminder window |
 
 ## Building, testing, deploying
 
