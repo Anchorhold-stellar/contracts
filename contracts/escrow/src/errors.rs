@@ -39,4 +39,10 @@ pub enum Error {
     ArbitrationFeeTooHigh = 33,
     TooMuchEvidence = 34,
     InvalidExpiryWindow = 35,
+    ExtensionLimitReached = 36,
+    TooManyExtensions = 37,
+    InvalidPageSize = 38,
+    AlreadyReminded = 39,
+    ReminderNotDue = 40,
+    InvalidReminderLead = 41,
 }

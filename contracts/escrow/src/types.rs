@@ -39,6 +39,18 @@ pub struct Milestone {
     /// the payout-to-host sense even though `released` is set to keep it
     /// out of future refund/completion accounting.
     pub released_at: u64,
+    /// How many times `extend_milestone_deadline` has moved this
+    /// milestone's `auto_release_at`. Enforced against
+    /// `MAX_DEADLINE_EXTENSIONS` - without a count cap, a renter could
+    /// dribble out 1-second extensions forever and dodge the
+    /// cumulative-seconds cap's intent.
+    pub extension_count: u32,
+    /// Cumulative seconds added across all extensions. Enforced against
+    /// `MAX_TOTAL_DEADLINE_EXTENSION_SECONDS` on every extend call.
+    pub total_extension_seconds: u64,
+    /// Set once `check_milestone_reminder` fires for this milestone so the
+    /// keeper can't spam the reminder event every poll tick.
+    pub reminder_sent: bool,
 }
 
 #[contracttype]

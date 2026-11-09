@@ -53,6 +53,27 @@ const MAX_SLASH_BPS: u32 = 5000; // 50%
 const MAX_ARBITRATION_FEE_BPS: u32 = 1000; // 10%
 /// Per-call cap on extend_milestone_deadline: 1 year.
 const MAX_DEADLINE_EXTENSION_SECONDS: u64 = 365 * 24 * 60 * 60;
+/// How many times a single milestone's deadline may be extended. Without a
+/// count cap, a renter could dribble out 1-second extensions forever and
+/// dodge the cumulative-seconds cap's intent.
+const MAX_DEADLINE_EXTENSIONS: u32 = 4;
+/// Cumulative cap across all extensions of one milestone: 2 years. Bounds
+/// how far a deadline can drift from what the host originally agreed to.
+const MAX_TOTAL_DEADLINE_EXTENSION_SECONDS: u64 = 2 * 365 * 24 * 60 * 60;
+/// Upper bound on how many milestones one `check_auto_release_range` call
+/// will scan. Keeps a keeper call from running out of gas on a 50-milestone
+/// escrow while still covering the whole list in a few calls.
+const MAX_AUTO_RELEASE_BATCH: u32 = 20;
+/// Upper bound on `get_escrows_for_party_page` page size - same
+/// storage/gas rationale as MAX_MILESTONES, applied to lookup pagination.
+const MAX_LOOKUP_PAGE: u32 = 50;
+/// Default (admin-configurable, see set_reminder_lead) length of time
+/// before `auto_release_at` that a `check_milestone_reminder` call becomes
+/// valid (3 days). Gives keepers/UIs a due-soon signal without spamming
+/// from escrow creation onward.
+const DEFAULT_REMINDER_LEAD_SECONDS: u64 = 3 * 24 * 60 * 60;
+const MIN_REMINDER_LEAD_SECONDS: u64 = 60 * 60; // 1 hour
+const MAX_REMINDER_LEAD_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 /// Upper bound on milestone descriptions and dispute evidence URIs. These
 /// land in persistent storage, so an unbounded string is an unbounded and
 /// permanent storage-cost griefing vector, not just a UX nuisance.
@@ -97,6 +118,7 @@ pub enum DataKey {
     FeeExempt(Address),
     StakeWeightedVoting,
     UnfundedExpiryWindow,
+    ReminderLead,
 }
 
 #[contract]
@@ -194,6 +216,24 @@ impl EscrowContract {
 
     pub fn get_unfunded_expiry_window(env: Env) -> u64 {
         Self::unfunded_expiry_window(&env)
+    }
+
+    /// How far ahead of `auto_release_at` a `check_milestone_reminder` call
+    /// becomes valid. Bounded to [MIN_REMINDER_LEAD_SECONDS,
+    /// MAX_REMINDER_LEAD_SECONDS] so it can't be set to something that
+    /// either fires from escrow creation onward or never fires at all.
+    pub fn set_reminder_lead(env: Env, admin: Address, seconds: u64) {
+        Self::require_admin(&env, &admin);
+        if !(MIN_REMINDER_LEAD_SECONDS..=MAX_REMINDER_LEAD_SECONDS).contains(&seconds) {
+            panic_with_error!(&env, Error::InvalidReminderLead);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ReminderLead, &seconds);
+    }
+
+    pub fn get_reminder_lead(env: Env) -> u64 {
+        Self::reminder_lead(&env)
     }
 
     /// Set (or update) the protocol fee taken out of every milestone payout.
@@ -359,6 +399,9 @@ impl EscrowContract {
                 released: false,
                 released_at: 0,
                 auto_release_at: 0, // set on deposit
+                extension_count: 0,
+                total_extension_seconds: 0,
+                reminder_sent: false,
             });
         }
 
@@ -397,6 +440,41 @@ impl EscrowContract {
             .persistent()
             .get(&DataKey::PartyEscrows(party))
             .unwrap_or(Vec::new(&env))
+    }
+
+    /// Paginated variant of `get_escrows_for_party` for parties with long
+    /// histories - unbounded reads get expensive in storage/gas, so callers
+    /// page through `start_index..start_index + max_count` instead.
+    /// `start_index` past the end returns an empty vec rather than
+    /// panicking; `max_count` is bounded by `MAX_LOOKUP_PAGE`, reusing
+    /// `InvalidPageSize` like `check_auto_release_range` does.
+    pub fn get_escrows_for_party_page(
+        env: Env,
+        party: Address,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_LOOKUP_PAGE {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let ids: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PartyEscrows(party))
+            .unwrap_or(Vec::new(&env));
+        let mut page: Vec<u32> = Vec::new(&env);
+        let len = ids.len();
+        if start_index >= len {
+            return page;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        for i in start_index..end {
+            page.push_back(ids.get(i).unwrap());
+        }
+        page
     }
 
     /// When `create_escrow` was called with `requires_host_acceptance =
@@ -477,6 +555,9 @@ impl EscrowContract {
             released: false,
             released_at: 0,
             auto_release_at: 0,
+            extension_count: 0,
+            total_extension_seconds: 0,
+            reminder_sent: false,
         });
         escrow.total_amount += amount;
         Self::revoke_stale_acceptance(&mut escrow);
@@ -568,6 +649,9 @@ impl EscrowContract {
                 released: false,
                 released_at: 0,
                 auto_release_at: 0,
+                extension_count: 0,
+                total_extension_seconds: 0,
+                reminder_sent: false,
             },
         );
         Self::revoke_stale_acceptance(&mut escrow);
@@ -749,21 +833,184 @@ impl EscrowContract {
         Self::release_milestone_internal(&env, &mut escrow, milestone_index);
     }
 
-    /// Renter grants the host extra time before a milestone's auto-release
-    /// deadline - a unilateral, host-favorable action (like an early
-    /// confirm, just in the other direction), so only the renter's
-    /// signature is required. Capped per-call to keep a fat-fingered value
-    /// from parking a milestone in limbo for centuries.
+    /// Keeper-friendly batch variant: scans up to `max_count` milestones
+    /// starting at `start_index` and releases every one that is due,
+    /// returning the indices it released. Unlike `check_auto_release` -
+    /// which panics on the first not-due milestone so a caller knows
+    /// exactly why one release refused - this silently skips released,
+    /// not-yet-due, and dispute-frozen milestones so one keeper call can
+    /// sweep a whole escrow without aborting halfway. `start_index` past
+    /// the end returns an empty vec; `max_count` is bounded by
+    /// `MAX_AUTO_RELEASE_BATCH` so a 50-milestone escrow can't run a
+    /// keeper call out of gas.
+    pub fn check_auto_release_range(
+        env: Env,
+        escrow_id: u32,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_AUTO_RELEASE_BATCH {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        let mut released: Vec<u32> = Vec::new(&env);
+        let len = escrow.milestones.len();
+        if start_index >= len {
+            return released;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        let now = env.ledger().timestamp();
+        for i in start_index..end {
+            let m = escrow.milestones.get(i).unwrap();
+            if m.released {
+                continue;
+            }
+            if escrow.status != EscrowStatus::Active {
+                continue;
+            }
+            if now < m.auto_release_at {
+                continue;
+            }
+            Self::release_milestone_internal(&env, &mut escrow, i);
+            released.push_back(i);
+        }
+        released
+    }
+
+    /// Keeper-pollable due-soon signal for a milestone whose auto-release
+    /// deadline is approaching. Fires at most once per milestone - the first
+    /// call inside the `[auto_release_at - reminder lead,
+    /// auto_release_at)` window sets `reminder_sent` and emits an
+    /// `(escrow, reminded)` event; later calls fail with `AlreadyReminded`
+    /// so a keeper polling every tick can't spam the event log. Calls
+    /// outside the window fail with `ReminderNotDue`, and - like
+    /// `check_auto_release` - this refuses to fire while the escrow is
+    /// `Disputed`, since a frozen milestone has no impending release to
+    /// warn about.
+    pub fn check_milestone_reminder(env: Env, escrow_id: u32, milestone_index: u32) {
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        if escrow.status == EscrowStatus::Disputed {
+            panic_with_error!(&env, Error::EscrowDisputed);
+        }
+        let mut m = escrow
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+        if m.released {
+            panic_with_error!(&env, Error::AlreadyReleased);
+        }
+        if m.reminder_sent {
+            panic_with_error!(&env, Error::AlreadyReminded);
+        }
+        let now = env.ledger().timestamp();
+        let window_start = m.auto_release_at.saturating_sub(Self::reminder_lead(&env));
+        if now < window_start || now >= m.auto_release_at {
+            panic_with_error!(&env, Error::ReminderNotDue);
+        }
+        m.reminder_sent = true;
+        let due_at = m.auto_release_at;
+        escrow.milestones.set(milestone_index, m);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("reminded")),
+            (escrow_id, milestone_index, due_at),
+        );
+    }
+
+    /// Keeper-friendly batch variant: scans up to `max_count` milestones
+    /// starting at `start_index` and fires the due-soon reminder for every
+    /// one inside its window, returning the indices it fired for. Unlike
+    /// `check_milestone_reminder` - which panics on the first milestone that
+    /// isn't due so a caller knows exactly why one reminder refused - this
+    /// silently skips released, already-reminded, not-yet-due, and
+    /// dispute-frozen milestones so one keeper call can sweep a whole escrow
+    /// without aborting halfway. `start_index` past the end returns an empty
+    /// vec; `max_count` is bounded by `MAX_AUTO_RELEASE_BATCH` - the same
+    /// keeper-sweep gas cap `check_auto_release_range` uses.
+    pub fn check_milestone_reminder_range(
+        env: Env,
+        escrow_id: u32,
+        start_index: u32,
+        max_count: u32,
+    ) -> Vec<u32> {
+        if max_count == 0 || max_count > MAX_AUTO_RELEASE_BATCH {
+            panic_with_error!(&env, Error::InvalidPageSize);
+        }
+        let mut escrow = Self::load_escrow(&env, escrow_id);
+        let mut fired: Vec<u32> = Vec::new(&env);
+        let len = escrow.milestones.len();
+        if start_index >= len {
+            return fired;
+        }
+        let mut end = start_index + max_count;
+        if end > len {
+            end = len;
+        }
+        let now = env.ledger().timestamp();
+        let lead = Self::reminder_lead(&env);
+        // Hoisted out of the loop: unlike the release sweep - where each
+        // release can flip the escrow to Completed mid-scan - firing
+        // reminders never changes status, so one check covers the whole run.
+        let disputed = escrow.status == EscrowStatus::Disputed;
+        for i in start_index..end {
+            if disputed {
+                continue;
+            }
+            let mut m = escrow.milestones.get(i).unwrap();
+            if m.released || m.reminder_sent {
+                continue;
+            }
+            let window_start = m.auto_release_at.saturating_sub(lead);
+            if now < window_start || now >= m.auto_release_at {
+                continue;
+            }
+            m.reminder_sent = true;
+            let due_at = m.auto_release_at;
+            escrow.milestones.set(i, m);
+            env.events().publish(
+                (symbol_short!("escrow"), symbol_short!("reminded")),
+                (escrow_id, i, due_at),
+            );
+            fired.push_back(i);
+        }
+        if !fired.is_empty() {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Escrow(escrow_id), &escrow);
+        }
+        fired
+    }
+
+    /// Both parties agree to push a milestone's auto-release deadline out -
+    /// requires both signatures in the same call, same pattern as
+    /// `mutual_cancel` and `extend_dispute_deadline`. An extension moves
+    /// money-timing for both sides (the renter waits longer to be able to
+    /// stop paying attention, the host waits longer to get paid), so a
+    /// unilateral renter-only extension would let one side move the other's
+    /// payout timing without consent. Capped three ways: per-call
+    /// (`MAX_DEADLINE_EXTENSION_SECONDS`), cumulative
+    /// (`MAX_TOTAL_DEADLINE_EXTENSION_SECONDS`), and count
+    /// (`MAX_DEADLINE_EXTENSIONS`) - so the parties can't dribble out
+    /// 1-second extensions forever or push one deadline years past what
+    /// was originally agreed.
     pub fn extend_milestone_deadline(
         env: Env,
         renter: Address,
+        host: Address,
         escrow_id: u32,
         milestone_index: u32,
         additional_seconds: u64,
     ) {
         renter.require_auth();
+        host.require_auth();
         let mut escrow = Self::load_escrow(&env, escrow_id);
-        if escrow.renter != renter {
+        if escrow.renter != renter || escrow.host != host {
             panic_with_error!(&env, Error::NotAuthorized);
         }
         if escrow.status != EscrowStatus::Active {
@@ -780,14 +1027,36 @@ impl EscrowContract {
         if m.released {
             panic_with_error!(&env, Error::AlreadyReleased);
         }
-        m.auto_release_at = m
+        if m.extension_count >= MAX_DEADLINE_EXTENSIONS {
+            panic_with_error!(&env, Error::TooManyExtensions);
+        }
+        let new_total = m
+            .total_extension_seconds
+            .checked_add(additional_seconds)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        if new_total > MAX_TOTAL_DEADLINE_EXTENSION_SECONDS {
+            panic_with_error!(&env, Error::ExtensionLimitReached);
+        }
+        let new_release_at = m
             .auto_release_at
             .checked_add(additional_seconds)
             .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidAmount));
+        m.auto_release_at = new_release_at;
+        m.extension_count += 1;
+        m.total_extension_seconds = new_total;
+        // The due-soon window moved with the deadline, so a reminder fired
+        // for the old date no longer covers the new one — re-arm it so the
+        // keeper can warn again ahead of the pushed deadline.
+        m.reminder_sent = false;
         escrow.milestones.set(milestone_index, m);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow"), symbol_short!("extended")),
+            (escrow_id, milestone_index, new_release_at, new_total),
+        );
     }
 
     /// Either party can open a dispute on a specific milestone before it
@@ -1271,6 +1540,29 @@ impl EscrowContract {
             .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone))
     }
 
+    /// Deadline-focused view of a milestone for keepers/UIs polling
+    /// upcoming releases - (auto_release_at, extension_count,
+    /// total_extension_seconds, reminder_sent). Cheaper for callers than
+    /// `get_milestone` when only the timing state matters; still
+    /// deserializes the whole Escrow under the hood, like
+    /// `get_escrow_status`.
+    pub fn get_milestone_deadline(
+        env: Env,
+        escrow_id: u32,
+        milestone_index: u32,
+    ) -> (u64, u32, u64, bool) {
+        let m = Self::load_escrow(&env, escrow_id)
+            .milestones
+            .get(milestone_index)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::InvalidMilestone));
+        (
+            m.auto_release_at,
+            m.extension_count,
+            m.total_extension_seconds,
+            m.reminder_sent,
+        )
+    }
+
     pub fn get_dispute(env: Env, escrow_id: u32, milestone_index: u32) -> Option<Dispute> {
         env.storage()
             .persistent()
@@ -1589,6 +1881,13 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::UnfundedExpiryWindow)
             .unwrap_or(DEFAULT_UNFUNDED_EXPIRY_WINDOW)
+    }
+
+    fn reminder_lead(env: &Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReminderLead)
+            .unwrap_or(DEFAULT_REMINDER_LEAD_SECONDS)
     }
 
     fn juror_params(env: &Env) -> JurorParams {
